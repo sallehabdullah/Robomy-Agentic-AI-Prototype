@@ -1,6 +1,4 @@
 """
-Deprecated entry point — kept so existing invocations keep working.
-
 This file used to hold the whole agent. It has been split along its real
 seams:
 
