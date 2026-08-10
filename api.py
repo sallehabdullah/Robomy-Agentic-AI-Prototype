@@ -21,9 +21,11 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import agent
@@ -118,17 +120,6 @@ class QueryOut(BaseModel):
 
 # --- routes ------------------------------------------------------------------
 
-@app.get("/", include_in_schema=False)
-def root():
-    """Visiting the bare URL in a browser previously hit FastAPI's default
-    404 handler (no route was defined for '/'), which reads as "the site
-    is broken" even though the API itself was working correctly — /health
-    and /query were fine the whole time. Redirect to the interactive docs
-    instead, which is the actual zero-frontend entry point for this API.
-    """
-    return RedirectResponse(url="/docs")
-
-
 @app.get("/health")
 def health():
     """Render's health check. Must not trigger a model call.
@@ -195,3 +186,18 @@ def query(body: QueryIn):
             "chunks_considered": result.considered,
         }
     return out
+
+
+# --- static chat frontend ---------------------------------------------------
+# Mounted LAST and deliberately at "/": Starlette checks routes in
+# registration order, so the explicit routes above (/health, /query, plus
+# FastAPI's own /docs, /openapi.json) still win on an exact match. Anything
+# that isn't one of those — starting with "/" itself — falls through to this
+# mount, which serves static/index.html (html=True makes "/" resolve to it).
+#
+# Same-origin: the page's own fetch("/query") calls never touch CORS, since
+# they're calling the same host that served the page. ALLOWED_ORIGINS above
+# is still what a *different* origin (a separately hosted frontend) would
+# need to be added to.
+_STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/", StaticFiles(directory=_STATIC_DIR, html=True), name="static")
