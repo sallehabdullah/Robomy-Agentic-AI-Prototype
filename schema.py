@@ -52,10 +52,28 @@ class AdipvenResponse(BaseModel):
             "stated in those chunks, in which case cut it; "
             "(3) whether the question touches cost, fees, quotes or "
             "timelines, which must never be answered; "
-            "(4) whether the question is genuinely ambiguous across "
-            "different IP rights, or is answerable as asked. "
-            "This field is internal and is not shown to the customer."
+            "(4) whether the message is a greeting / small talk / off-topic "
+            "rather than a factual question. "
+            "Note: content in a chunk tagged HISTORICAL is still usable — "
+            "state the date rather than declining. This field is internal "
+            "and is not shown to the customer."
         )
+    )
+
+    conversational: bool = Field(
+        default=False,
+        description=(
+            "True when the message is NOT a factual question about Adipven: "
+            "a greeting ('hi', 'hello'), thanks, a question about what you "
+            "can help with, or something clearly off-topic (recipes, the "
+            "weather). These make no factual claim and need no sources — set "
+            "can_answer=false and a warm, steering reply is supplied for "
+            "you; contact details are NOT pushed at someone who only said "
+            "hello. Do NOT set this on a genuine factual question you simply "
+            "cannot answer from the passages (e.g. 'how long does a Malaysian "
+            "patent last?') — that stays conversational=false, can_answer="
+            "false, so it is handled as 'I don't have that; contact Adipven.'"
+        ),
     )
 
     # Defaulted deliberately. The model intermittently omits the booleans,
@@ -134,6 +152,7 @@ class AdipvenResponse(BaseModel):
         default=True,
         description=(
             "True for any cost, fee, quote or timeline question, and true "
-            "whenever can_answer is False."
+            "whenever can_answer is False — EXCEPT on a conversational turn "
+            "(greeting / small talk), where no contact redirect is wanted."
         ),
     )

@@ -21,6 +21,7 @@ right move would be a state graph, not a longer pipe. It has not grown one.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -92,6 +93,21 @@ rights AND the right answer changes materially depending on which is \
 meant. Ask at most one question, and never more than once in a \
 conversation. If the question is answerable as asked, answer it.
 
+## Greetings and small talk
+
+Not every message is a question. A greeting ("hi", "hello"), a thanks, a \
+question about what you can help with, or a clearly off-topic message \
+(recipes, the weather) is conversational: it makes no factual claim and \
+needs no sources. Set conversational=true and can_answer=false, and reply \
+by warmly inviting an Adipven question — do not push contact details at \
+someone who only said hello. The warm reply text is supplied for you.
+
+Mind the boundary: a real factual question you cannot answer from the \
+passages is NOT small talk. "How long does a Malaysian patent last?" is a \
+genuine question the passages don't cover — leave conversational=false and \
+can_answer=false, so it is handled as "I don't have that; contact Adipven." \
+Never label a factual question conversational just to avoid answering it.
+
 ## Output completeness
 
 Emit every field on every reply, including `answer` and `service_area`.
@@ -154,6 +170,20 @@ microbiology.
 service_area: patents
 can_answer: true
 source_ids: ["01-services__patents"]
+requires_contact: false
+
+### Example — a greeting (warm steer, NOT a contact redirect)
+
+User: Hello
+
+reasoning: A greeting, not a question. Conversational; no sources needed.
+conversational: true
+needs_clarification: false
+answer: Hello! I can help with questions about Adipven's IP services — what \
+would you like to know?
+service_area: out_of_scope
+can_answer: false
+source_ids: []
 requires_contact: false
 """
 
@@ -268,6 +298,16 @@ def _fail_closed(
     return grounding.refusal_for(verdict, stub), result, verdict
 
 
+def _is_trivial_message(query: str) -> bool:
+    """Whole-message greeting/pleasantry that needs no model call at all.
+
+    Exact match on the normalised message only, so "hi" short-circuits but
+    "hi, do you file patents?" does not — that still goes to the model.
+    """
+    normalised = " ".join(re.sub(r"[^\w\s]", " ", query).lower().split())
+    return normalised in config.TRIVIAL_MESSAGES
+
+
 def answer(
     query: str,
     pending: PendingClarification | None = None,
@@ -277,6 +317,17 @@ def answer(
     Returns the response, what was retrieved, and why the grounding check
     ruled the way it did.
     """
+    # Fast path: a bare greeting or thanks (and no clarification in flight)
+    # is answered in code — no retrieval, no API call. This is both the fix
+    # for "hello" cold-redirecting to contact, and the biggest latency win
+    # available here: an instant, free reply instead of a ~10-26s round trip.
+    if pending is None and _is_trivial_message(query):
+        verdict = GroundingVerdict(
+            grounding.Failure.CONVERSATIONAL, "trivial greeting (no model call)"
+        )
+        empty = retrieval_mod.RetrievalResult(query=query, considered=0)
+        return grounding.conversational_reply(verdict.detail), empty, verdict
+
     # Retrieval is unconditional: this agent has exactly one job and every
     # question needs the store. The old code let the model decide whether to
     # search, which spent a round trip to reach a foregone conclusion.

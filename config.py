@@ -181,3 +181,27 @@ PRICING_ANSWER = (
     "Adipven's published material doesn't include fees, rates, or cost "
     "estimates, so I can't quote or estimate a price. " + CONTACT_REDIRECT
 )
+
+# Used for greetings, thanks, "what can you do", and clearly off-topic
+# messages. These make no factual claim, so — unlike the fail-closed path —
+# they get a warm steer toward Adipven rather than a contact redirect. Kept
+# in code (not model free-text) so a mislabelled turn can never smuggle an
+# ungrounded claim through this path; the worst case is a friendly steer.
+CONVERSATIONAL_ANSWER = (
+    "I'm here to help with questions about Adipven's intellectual property "
+    "services — including patents, trademarks, industrial design, copyright, "
+    "and enforcement. What would you like to know?"
+)
+
+# Whole-message greetings/pleasantries that need no model call at all — the
+# agent answers these in code, instantly and at zero API cost. Matching is
+# exact on the normalised (lowercased, punctuation-stripped) message, so
+# "hi" alone matches but "hi, do you file patents?" does not and still goes
+# to the model. Keep this list conservative for that reason.
+TRIVIAL_MESSAGES = frozenset({
+    "hi", "hello", "hey", "yo", "hiya", "howdy", "hi there", "hello there",
+    "good morning", "good afternoon", "good evening", "greetings",
+    "thanks", "thank you", "thankyou", "thanks a lot", "ty", "cheers",
+    "what can you do", "what can you help with", "what do you do",
+    "help", "who are you",
+})

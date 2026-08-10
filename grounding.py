@@ -48,6 +48,11 @@ class Failure(str, Enum):
     # it distinct means --debug can tell a correct decline apart from a
     # fabrication.
     MODEL_DECLINED = "model_reported_it_cannot_answer"
+    # Also not a defect: a greeting, thanks, or off-topic message that makes
+    # no factual claim. Gets a warm steer toward Adipven instead of a contact
+    # redirect. Like the others, the reply text is code-authored, so even a
+    # mislabelled turn cannot smuggle an ungrounded claim through here.
+    CONVERSATIONAL = "conversational_neutral"
 
 
 @dataclass(frozen=True)
@@ -125,6 +130,15 @@ def check(
     if _is_pricing(query, response):
         return GroundingVerdict(Failure.PRICING, "query mentions cost/fees")
 
+    # A greeting / thanks / off-topic message makes no factual claim, so it
+    # must NOT fall through to the fail-closed retrieval checks below (which
+    # would cold-redirect "hello" to the contact page). Handled before them,
+    # and only when the model is not also claiming to answer a question.
+    if response.conversational and not response.can_answer:
+        return GroundingVerdict(
+            Failure.CONVERSATIONAL, "greeting / small talk / off-topic"
+        )
+
     # Clarification requests make no factual claims, so they are exempt from
     # the citation rules — but only if a question was actually supplied.
     if response.needs_clarification and response.clarifying_question:
@@ -178,12 +192,37 @@ def check(
     return GroundingVerdict(Failure.NONE)
 
 
+def conversational_reply(detail: str = "", original_reasoning: str = "") -> AdipvenResponse:
+    """A warm, code-authored steer toward Adipven for a non-factual turn.
+
+    Reply text comes from config, never the model, so this path cannot emit
+    an ungrounded claim no matter how the turn was classified.
+    """
+    note = "[conversational/neutral turn: " + (detail or "small talk") + "]"
+    if original_reasoning:
+        note += f"\n\nModel's original reasoning:\n{original_reasoning}"
+    return AdipvenResponse(
+        reasoning=note,
+        conversational=True,
+        needs_clarification=False,
+        clarifying_question=None,
+        answer=config.CONVERSATIONAL_ANSWER,
+        service_area="out_of_scope",
+        can_answer=False,
+        source_ids=[],
+        requires_contact=False,
+    )
+
+
 def refusal_for(verdict: GroundingVerdict, original: AdipvenResponse) -> AdipvenResponse:
     """Build the replacement response for a failed check.
 
     Constructs a new object rather than mutating the validated one, so the
     model's original output stays intact for debugging.
     """
+    if verdict.failure is Failure.CONVERSATIONAL:
+        return conversational_reply(verdict.detail, original.reasoning)
+
     if verdict.failure is Failure.PRICING:
         answer = config.PRICING_ANSWER
         area = "pricing"
