@@ -21,6 +21,7 @@ right move would be a state graph, not a longer pipe. It has not grown one.
 from __future__ import annotations
 
 import logging
+import random
 import re
 from dataclasses import dataclass
 from functools import lru_cache
@@ -98,9 +99,13 @@ conversation. If the question is answerable as asked, answer it.
 Not every message is a question. A greeting ("hi", "hello"), a thanks, a \
 question about what you can help with, or a clearly off-topic message \
 (recipes, the weather) is conversational: it makes no factual claim and \
-needs no sources. Set conversational=true and can_answer=false, and reply \
-by warmly inviting an Adipven question — do not push contact details at \
-someone who only said hello. The warm reply text is supplied for you.
+needs no sources. Set conversational=true and can_answer=false.
+
+Write a short, warm reply (one or two sentences) that acknowledges what \
+the person said and steers toward Adipven's services. Vary your phrasing — \
+do not repeat the same greeting formula across turns. Do not push contact \
+details at someone who only said hello. Do not make factual claims about \
+Adipven beyond naming the service areas listed at the top of this prompt.
 
 Mind the boundary: a real factual question you cannot answer from the \
 passages is NOT small talk. "How long does a Malaysian patent last?" is a \
@@ -179,8 +184,23 @@ User: Hello
 reasoning: A greeting, not a question. Conversational; no sources needed.
 conversational: true
 needs_clarification: false
-answer: Hello! I can help with questions about Adipven's IP services — what \
-would you like to know?
+answer: Hi there! Happy to help with anything about Adipven's IP work — \
+patents, trademarks, industrial design, and more. What brings you here?
+service_area: out_of_scope
+can_answer: false
+source_ids: []
+requires_contact: false
+
+### Example — small talk that is NOT a greeting (still conversational)
+
+User: How are you?
+
+reasoning: Not a question about Adipven, and not a request for information \
+— small talk. Conversational; acknowledge it briefly, then steer.
+conversational: true
+needs_clarification: false
+answer: Doing well, thanks for asking! I'm here whenever you have a \
+question about Adipven's IP services — patents, trademarks, and the rest.
 service_area: out_of_scope
 can_answer: false
 source_ids: []
@@ -298,14 +318,20 @@ def _fail_closed(
     return grounding.refusal_for(verdict, stub), result, verdict
 
 
-def _is_trivial_message(query: str) -> bool:
+def _trivial_category(query: str) -> str | None:
     """Whole-message greeting/pleasantry that needs no model call at all.
 
     Exact match on the normalised message only, so "hi" short-circuits but
     "hi, do you file patents?" does not — that still goes to the model.
+    Returns the category name (a key into config.CONVERSATIONAL_POOLS) so
+    the fast path can vary its reply instead of returning the same string
+    every time, or None if the message isn't an exact trivial match.
     """
     normalised = " ".join(re.sub(r"[^\w\s]", " ", query).lower().split())
-    return normalised in config.TRIVIAL_MESSAGES
+    for category, messages in config.TRIVIAL_CATEGORIES.items():
+        if normalised in messages:
+            return category
+    return None
 
 
 def answer(
@@ -321,12 +347,20 @@ def answer(
     # is answered in code — no retrieval, no API call. This is both the fix
     # for "hello" cold-redirecting to contact, and the biggest latency win
     # available here: an instant, free reply instead of a ~10-26s round trip.
-    if pending is None and _is_trivial_message(query):
+    #
+    # Category-based, not a single fixed string: three different exact
+    # greetings ("hi", "hello", "hey") each get a random pick from the
+    # matching pool, so the fast path doesn't repeat itself even though it
+    # never touches the model. See config.CONVERSATIONAL_POOLS.
+    category = _trivial_category(query) if pending is None else None
+    if category is not None:
+        text = random.choice(config.CONVERSATIONAL_POOLS[category])
         verdict = GroundingVerdict(
-            grounding.Failure.CONVERSATIONAL, "trivial greeting (no model call)"
+            grounding.Failure.CONVERSATIONAL,
+            f"trivial {category} (no model call)",
         )
         empty = retrieval_mod.RetrievalResult(query=query, considered=0)
-        return grounding.conversational_reply(verdict.detail), empty, verdict
+        return grounding.conversational_reply(text, verdict.detail), empty, verdict
 
     # Retrieval is unconditional: this agent has exactly one job and every
     # question needs the store. The old code let the model decide whether to

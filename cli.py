@@ -66,12 +66,41 @@ def _print_response(response: AdipvenResponse) -> None:
     print(f"  [{', '.join(bits)}]")
 
 
-def run_once(query: str, pending, debug: bool) -> AdipvenResponse:
+def run_once(
+    query: str,
+    pending,
+    debug: bool,
+    consecutive_conversational: int = 0,
+) -> tuple[AdipvenResponse, int]:
+    """Answer one turn, and return the count of consecutive conversational
+    turns seen so far (for the caller to pass back in next time).
+
+    Escalation on the 3rd consecutive conversational turn (greeting, thanks,
+    small talk, off-topic — see schema.AdipvenResponse.conversational) is
+    CLI-only session state, not part of the agent itself: the API is
+    stateless, so this can't live in agent.answer() without either adding
+    server-side session tracking (out of scope) or pushing the count through
+    every HTTP request (awkward for a nice-to-have). Kept here as a
+    presentation-layer override — the underlying `response` returned to the
+    caller (e.g. for `pending` tracking) is untouched; only what's printed
+    changes on escalation.
+    """
     response, result, verdict = agent.answer(query, pending)
+
+    display = response
+    new_count = 0
+    if response.conversational:
+        new_count = consecutive_conversational + 1
+        if new_count >= 3:
+            display = response.model_copy(
+                update={"answer": config.CONVERSATIONAL_ESCALATION}
+            )
+            new_count = 0  # fires again after another 3, not on every turn after
+
     if debug:
-        _print_debug(result, response, verdict)
-    _print_response(response)
-    return response
+        _print_debug(result, display, verdict)
+    _print_response(display)
+    return response, new_count
 
 
 def main() -> int:
@@ -103,7 +132,7 @@ def main() -> int:
 
     try:
         if args.query:
-            run_once(args.query, None, args.debug)
+            run_once(args.query, None, args.debug)  # single turn, no escalation state
             return 0
     except VectorStoreUnavailable as exc:
         print(f"\nCannot start: {exc}", file=sys.stderr)
@@ -121,6 +150,10 @@ def main() -> int:
     # transcript across unrelated questions.
     pending: agent.PendingClarification | None = None
 
+    # See run_once() — CLI-only session state for the conversational-
+    # escalation nice-to-have (Task 4). Any substantive turn resets it.
+    consecutive_conversational = 0
+
     while True:
         try:
             user_input = input("\nYou: ").strip()
@@ -134,7 +167,9 @@ def main() -> int:
             continue
 
         try:
-            response = run_once(user_input, pending, args.debug)
+            response, consecutive_conversational = run_once(
+                user_input, pending, args.debug, consecutive_conversational
+            )
         except VectorStoreUnavailable as exc:
             print(f"\nRetrieval unavailable: {exc}", file=sys.stderr)
             return 2

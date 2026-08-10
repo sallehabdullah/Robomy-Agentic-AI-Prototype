@@ -23,6 +23,7 @@ softened. There is no partial-answer path.
 from __future__ import annotations
 
 import logging
+import random
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -192,11 +193,18 @@ def check(
     return GroundingVerdict(Failure.NONE)
 
 
-def conversational_reply(detail: str = "", original_reasoning: str = "") -> AdipvenResponse:
-    """A warm, code-authored steer toward Adipven for a non-factual turn.
+def conversational_reply(
+    text: str, detail: str = "", original_reasoning: str = ""
+) -> AdipvenResponse:
+    """Build a conversational-turn response carrying `text` as the answer.
 
-    Reply text comes from config, never the model, so this path cannot emit
-    an ungrounded claim no matter how the turn was classified.
+    `text` is either the model's own generated reply (preferred — see
+    refusal_for below) or a code-authored pool pick (the fast path, or the
+    fallback when the model's text is missing/too long). Either way the
+    fields around it — no sources, can_answer=False, requires_contact=False
+    — are fixed by code, not the model, which is what keeps this path safe:
+    a conversational turn cannot carry a citation or a contact-redirect
+    flag it didn't earn.
     """
     note = "[conversational/neutral turn: " + (detail or "small talk") + "]"
     if original_reasoning:
@@ -206,7 +214,7 @@ def conversational_reply(detail: str = "", original_reasoning: str = "") -> Adip
         conversational=True,
         needs_clarification=False,
         clarifying_question=None,
-        answer=config.CONVERSATIONAL_ANSWER,
+        answer=text,
         service_area="out_of_scope",
         can_answer=False,
         source_ids=[],
@@ -221,7 +229,22 @@ def refusal_for(verdict: GroundingVerdict, original: AdipvenResponse) -> Adipven
     model's original output stays intact for debugging.
     """
     if verdict.failure is Failure.CONVERSATIONAL:
-        return conversational_reply(verdict.detail, original.reasoning)
+        # The model's own conversational answer is preferred over static
+        # text — it's already varied and contextual, and (per the system
+        # prompt) makes no factual claim about Adipven beyond naming
+        # service areas, which is no riskier than the pool text it would
+        # otherwise be replaced with. Only fall back to a pool pick if the
+        # model left it empty or it's implausibly long for a greeting reply
+        # (a sign the model generated substantive content and mislabelled
+        # it conversational, not that it wrote a longer-than-usual hello).
+        text = original.answer.strip()
+        if not text or len(text) > config.CONVERSATIONAL_LENGTH_CAP:
+            log.warning(
+                "conversational answer replaced with pool fallback "
+                "(len=%d, cap=%d)", len(text), config.CONVERSATIONAL_LENGTH_CAP
+            )
+            text = random.choice(config.CONVERSATIONAL_POOLS["generic"])
+        return conversational_reply(text, verdict.detail, original.reasoning)
 
     if verdict.failure is Failure.PRICING:
         answer = config.PRICING_ANSWER

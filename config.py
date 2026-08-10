@@ -182,26 +182,114 @@ PRICING_ANSWER = (
     "estimates, so I can't quote or estimate a price. " + CONTACT_REDIRECT
 )
 
-# Used for greetings, thanks, "what can you do", and clearly off-topic
-# messages. These make no factual claim, so — unlike the fail-closed path —
-# they get a warm steer toward Adipven rather than a contact redirect. Kept
-# in code (not model free-text) so a mislabelled turn can never smuggle an
-# ungrounded claim through this path; the worst case is a friendly steer.
-CONVERSATIONAL_ANSWER = (
-    "I'm here to help with questions about Adipven's intellectual property "
-    "services — including patents, trademarks, industrial design, copyright, "
-    "and enforcement. What would you like to know?"
+# Conversational reply pools, grouped by category. Used two ways:
+#
+#   1. The trivial-message fast path (agent._trivial_category) picks
+#      randomly from the matching pool for an exact-match greeting/thanks/
+#      meta message — no model call, no latency, no cost.
+#   2. grounding.refusal_for() falls back to "generic" if the model's own
+#      conversational answer is empty or exceeds the length cap. The model's
+#      own text is preferred when it's present and reasonable (see Task 2 in
+#      the brief this was built against) — these pools are the safety net,
+#      not the primary source of conversational replies.
+#
+# Text constraints (matter for safety, not just tone): no factual claims
+# about Adipven beyond the service-area names already in the system prompt
+# (those are the firm's own published list, so they're safe); no "we"
+# voice — this bot is Adipven's assistant, not Adipven itself; no sales
+# language. Kept in code so even the fast path — which never touches the
+# model — still varies its phrasing.
+CONVERSATIONAL_POOLS: dict[str, list[str]] = {
+    "greeting": [
+        "Hello! What would you like to know about Adipven's IP services?",
+        "Hi there — I can help with questions about patents, trademarks, "
+        "industrial design, and more. What's on your mind?",
+        "Hey! Ask me anything about Adipven's intellectual property services.",
+        "Hello! I'm here for questions on patents, trademarks, copyright, "
+        "and the rest of Adipven's IP services.",
+        "Hi! Happy to help with questions about Adipven's IP services — "
+        "what would you like to know?",
+    ],
+    "thanks": [
+        "You're welcome! Let me know if you have any other questions about "
+        "Adipven's services.",
+        "Happy to help — feel free to ask anything else about Adipven's IP "
+        "services.",
+        "Glad I could help! Anything else you'd like to know?",
+        "No problem at all — ask away if anything else comes to mind.",
+        "You're welcome — happy to help with any other IP questions.",
+    ],
+    "meta": [
+        "I can answer questions about Adipven's services — patents, "
+        "trademarks, industrial design, copyright, geographical "
+        "indications, licensing, enforcement, IP audit and valuation, and "
+        "IP training. What are you interested in?",
+        "I answer questions about Adipven's intellectual property "
+        "services: patents, trademarks, industrial design, copyright, "
+        "geographical indications, licensing, enforcement, IP audit and "
+        "valuation, and training. Where would you like to start?",
+        "I'm here to help with questions on Adipven's IP services — from "
+        "patents and trademarks to enforcement and IP training. What "
+        "would you like to know?",
+    ],
+    # Fallback only: the model's own conversational answer (off-topic
+    # remarks, "how are you", anything not an exact greeting/thanks/meta
+    # match) is preferred and passed through as-is — see grounding.py. This
+    # pool is reached only if that text is missing or too long.
+    "generic": [
+        "I'm best at answering questions about Adipven's IP services — "
+        "patents, trademarks, industrial design, copyright, and more. "
+        "What would you like to know?",
+        "I can help with questions about Adipven's intellectual property "
+        "services. What would you like to ask?",
+        "That's outside what I can help with, but I'm happy to answer "
+        "questions about Adipven's IP services — patents, trademarks, and "
+        "more.",
+        "I focus on Adipven's IP services — feel free to ask about "
+        "patents, trademarks, industrial design, or enforcement.",
+    ],
+}
+
+# The model's conversational answer is passed through as-is (see
+# grounding.py) rather than replaced — but a greeting reply should be a
+# sentence or two. A much longer one suggests the model generated
+# substantive content and mislabelled it conversational; that gets swapped
+# for a "generic" pool pick instead of shown verbatim.
+CONVERSATIONAL_LENGTH_CAP = 300
+
+# A user who sends three consecutive greetings/pleasantries with no
+# substantive question in between gets a firmer steer on the third,
+# instead of a fourth "what would you like to know?" Tracked client-side —
+# currently only cli.py does this; the API is stateless per the brief.
+CONVERSATIONAL_ESCALATION = (
+    "I'm best at answering specific questions about Adipven's IP services "
+    "— for example, you could ask about patent filing, trademark "
+    "registration, or enforcement. What would you like to know?"
 )
 
 # Whole-message greetings/pleasantries that need no model call at all — the
 # agent answers these in code, instantly and at zero API cost. Matching is
 # exact on the normalised (lowercased, punctuation-stripped) message, so
 # "hi" alone matches but "hi, do you file patents?" does not and still goes
-# to the model. Keep this list conservative for that reason.
-TRIVIAL_MESSAGES = frozenset({
+# to the model. Keep these sets conservative for that reason. Anything not
+# listed here (including "how are you", off-topic remarks, etc.) still goes
+# to the model, which classifies it via the `conversational` field.
+TRIVIAL_GREETINGS = frozenset({
     "hi", "hello", "hey", "yo", "hiya", "howdy", "hi there", "hello there",
     "good morning", "good afternoon", "good evening", "greetings",
+})
+TRIVIAL_THANKS = frozenset({
     "thanks", "thank you", "thankyou", "thanks a lot", "ty", "cheers",
+})
+TRIVIAL_META = frozenset({
     "what can you do", "what can you help with", "what do you do",
     "help", "who are you",
 })
+
+# category -> message set, in priority order. Built once; agent.py looks
+# messages up against this rather than three separate membership checks.
+TRIVIAL_CATEGORIES: dict[str, frozenset[str]] = {
+    "greeting": TRIVIAL_GREETINGS,
+    "thanks": TRIVIAL_THANKS,
+    "meta": TRIVIAL_META,
+}

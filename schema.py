@@ -64,15 +64,18 @@ class AdipvenResponse(BaseModel):
         default=False,
         description=(
             "True when the message is NOT a factual question about Adipven: "
-            "a greeting ('hi', 'hello'), thanks, a question about what you "
-            "can help with, or something clearly off-topic (recipes, the "
-            "weather). These make no factual claim and need no sources — set "
-            "can_answer=false and a warm, steering reply is supplied for "
-            "you; contact details are NOT pushed at someone who only said "
-            "hello. Do NOT set this on a genuine factual question you simply "
-            "cannot answer from the passages (e.g. 'how long does a Malaysian "
-            "patent last?') — that stays conversational=false, can_answer="
-            "false, so it is handled as 'I don't have that; contact Adipven.'"
+            "a greeting ('hi', 'hello'), thanks, small talk ('how are "
+            "you'), a question about what you can help with, or something "
+            "clearly off-topic (recipes, the weather). These make no "
+            "factual claim and need no sources — set can_answer=false and "
+            "write your own short, warm, VARIED reply in `answer` that "
+            "steers toward Adipven's services (do not push contact details "
+            "at someone who only said hello, and do not repeat the same "
+            "phrasing you used earlier in the conversation). Do NOT set "
+            "this on a genuine factual question you simply cannot answer "
+            "from the passages (e.g. 'how long does a Malaysian patent "
+            "last?') — that stays conversational=false, can_answer=false, "
+            "so it is handled as 'I don't have that; contact Adipven.'"
         ),
     )
 
