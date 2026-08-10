@@ -23,6 +23,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 import agent
@@ -116,6 +117,17 @@ class QueryOut(BaseModel):
 
 
 # --- routes ------------------------------------------------------------------
+
+@app.get("/", include_in_schema=False)
+def root():
+    """Visiting the bare URL in a browser previously hit FastAPI's default
+    404 handler (no route was defined for '/'), which reads as "the site
+    is broken" even though the API itself was working correctly — /health
+    and /query were fine the whole time. Redirect to the interactive docs
+    instead, which is the actual zero-frontend entry point for this API.
+    """
+    return RedirectResponse(url="/docs")
+
 
 @app.get("/health")
 def health():
