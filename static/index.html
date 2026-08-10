@@ -5,37 +5,34 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Adipven Assistant</title>
 <style>
+  /*
+    Palette: #580324 is Adipven's own brand maroon — sampled directly from
+    adipven.com (the computed background-color of their hero/tagline
+    section, "The BEST IP Protection and IP Strategies"), not guessed.
+
+    A pure #000000 / raw #580324 pairing looks flat and the deep brand
+    maroon reads as near-invisible against true black (their contrast ratio
+    is only ~1.4:1), so: the page background is a near-black (not literal
+    #000, for a touch of depth), and a brighter maroon in the same hue
+    family carries interactive elements (buttons, links, focus) so they
+    stay legible, while the true brand maroon fills the user's own message
+    bubbles, where it reads as a deliberate accent rather than a button.
+  */
   :root {
-    --bg: #f6f5f3;
-    --panel: #ffffff;
-    --border: #e4e1db;
-    --text: #2a2a28;
-    --muted: #7a766e;
-    --accent: #8a6d3b;
-    --accent-ink: #ffffff;
-    --bubble-user: #2a2a28;
-    --bubble-user-ink: #ffffff;
-    --bubble-bot: #efece6;
-    --bubble-bot-ink: #2a2a28;
-    --warn-bg: #fdf3e7;
-    --warn-border: #e9c98f;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #171614;
-      --panel: #201f1c;
-      --border: #35322c;
-      --text: #ece9e2;
-      --muted: #9a958a;
-      --accent: #c9a15f;
-      --accent-ink: #171614;
-      --bubble-user: #c9a15f;
-      --bubble-user-ink: #171614;
-      --bubble-bot: #2b2a26;
-      --bubble-bot-ink: #ece9e2;
-      --warn-bg: #2c2410;
-      --warn-border: #5a4620;
-    }
+    --bg: #0b0b0c;
+    --panel: #141416;
+    --panel-2: #1c1c1f;
+    --border: #2a2a2e;
+    --text: #f2f0ee;
+    --muted: #98938d;
+
+    --maroon: #580324;        /* true Adipven brand value */
+    --maroon-bright: #a3184f; /* interactive accent: buttons, links, focus */
+    --maroon-hover: #c02361;
+    --on-maroon: #ffffff;
+
+    --warn-bg: #241412;
+    --warn-border: #7a2e22;
   }
   * { box-sizing: border-box; }
   html, body {
@@ -51,13 +48,14 @@
   }
   header {
     padding: 18px 20px 14px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 2px solid var(--maroon);
     background: var(--panel);
   }
   header h1 {
     margin: 0;
     font-size: 1.15rem;
     font-weight: 650;
+    letter-spacing: 0.01em;
   }
   header p {
     margin: 4px 0 0;
@@ -101,13 +99,14 @@
     word-wrap: break-word;
   }
   .row.user .bubble {
-    background: var(--bubble-user);
-    color: var(--bubble-user-ink);
+    background: var(--maroon);
+    color: var(--on-maroon);
     border-bottom-right-radius: 4px;
   }
   .row.bot .bubble {
-    background: var(--bubble-bot);
-    color: var(--bubble-bot-ink);
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
     border-bottom-left-radius: 4px;
   }
   .row.bot .bubble.error {
@@ -157,17 +156,23 @@
     color: var(--text);
     max-height: 120px;
   }
-  #input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  #input:focus {
+    outline: 2px solid var(--maroon-bright);
+    outline-offset: 1px;
+    border-color: var(--maroon-bright);
+  }
   button#send {
     border: none;
     border-radius: 10px;
     padding: 0 18px;
-    background: var(--accent);
-    color: var(--accent-ink);
+    background: var(--maroon-bright);
+    color: var(--on-maroon);
     font-weight: 600;
     font-size: 0.9rem;
     cursor: pointer;
+    transition: background 0.15s ease;
   }
+  button#send:hover:not(:disabled) { background: var(--maroon-hover); }
   button#send:disabled {
     opacity: 0.5;
     cursor: default;
@@ -179,6 +184,15 @@
     margin-top: 40px;
     padding: 0 24px;
   }
+  /* Sleek scrollbar for the message log — degrades gracefully where
+     unsupported (Firefox falls back to its own default). */
+  #messages::-webkit-scrollbar { width: 8px; }
+  #messages::-webkit-scrollbar-track { background: transparent; }
+  #messages::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 8px;
+  }
+  #messages::-webkit-scrollbar-thumb:hover { background: var(--maroon); }
 </style>
 </head>
 <body>
