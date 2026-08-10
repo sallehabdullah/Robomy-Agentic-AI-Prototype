@@ -1,0 +1,28 @@
+# Pinned from a working environment (`pip freeze`), trimmed to the
+# top-level packages this project actually imports. Everything else in a
+# full `pip freeze` here is a transitive dependency pip will resolve on its
+# own from these pins.
+#
+# NOTE: sentence-transformers pulls in torch. torch dominates install size,
+# build time, and resident memory at runtime — see THRESHOLD.md / the
+# deployment summary for the measured memory impact. Do not add packages
+# here casually; on this project torch is already the single biggest cost.
+
+# --- web service -------------------------------------------------------
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+
+# --- LLM generation ------------------------------------------------------
+anthropic==0.120.2
+langchain-core==1.5.3
+langchain-anthropic==1.5.4
+
+# --- retrieval / vector store --------------------------------------------
+langchain-chroma==1.1.0
+langchain-huggingface==1.2.2
+chromadb==1.5.9
+sentence-transformers==5.7.0
+
+# --- schema / config -------------------------------------------------------
+pydantic==2.13.4
+python-dotenv==1.2.2

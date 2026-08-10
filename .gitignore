@@ -1,0 +1,14 @@
+# Secrets — never commit
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# adipven_chroma_db/ is intentionally NOT ignored — it is a small (~3MB)
+# built artifact and is committed on purpose (see deployment summary,
+# "vector store strategy: option a"). If ingestion is later moved to
+# Render's build step instead, uncomment the line below.
+# adipven_chroma_db/

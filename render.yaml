@@ -1,0 +1,25 @@
+# Render blueprint. Vector-store strategy: option (a) — adipven_chroma_db/
+# is committed to the repo (see .gitignore and the deployment summary), so
+# the build step is just `pip install`; it does not run ingest_adipven.py.
+#
+# ANTHROPIC_API_KEY is intentionally NOT set here. `sync: false` means
+# Render will prompt for it once in the dashboard and hold it as a secret
+# env var — it never touches this file or the repo.
+services:
+  - type: web
+    name: adipven-assistant-api
+    runtime: python
+    plan: free   # see deployment summary — Task 3 memory measurement
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      # Keep the debug surface off by default in the deployed service.
+      # Flip to "1" temporarily in the dashboard only if you need to
+      # inspect `reasoning` / the grounding verdict remotely.
+      - key: DEBUG_API
+        value: "0"
