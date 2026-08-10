@@ -18,8 +18,10 @@ PERSIST_DIR = str(PROJECT_ROOT / "adipven_chroma_db")
 
 
 # --- embeddings ------------------------------------------------------------
-# Local, no API key, no per-call cost. Long-term target is on-device
-# inference on a Jetson Orin, so this stays local.
+# Local, no API key, no per-call cost — which keeps per-query cost at zero
+# and avoids a second vendor dependency. (An earlier version of this
+# comment cited an on-device Jetson Orin target; that is NOT the goal. The
+# deployment target is a hosted web service.)
 #
 # DO NOT change without re-running ingestion. Changing the encoder, OR the
 # backend that runs it, invalidates every vector already in PERSIST_DIR —

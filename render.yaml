@@ -17,7 +17,17 @@ services:
     # (see THRESHOLD.md / deployment summary, Task 3) to cut resident
     # memory and load time before reconsidering a paid plan.
     plan: free
-    buildCommand: pip install -r requirements.txt
+    # The second command pre-fetches the ONNX encoder into
+    # ~/.cache/chroma at BUILD time. Without it, the first request after
+    # deploy pays a ~79MB download + SHA256 verify + tar extract + ONNX
+    # session build, all inside the 512MB runtime budget and all before
+    # the port opens — which is both a memory spike and a startup delay
+    # that Render's port scanner can time out on. Build and runtime share
+    # the instance filesystem, so a warm cache here means startup is just
+    # a local file load.
+    buildCommand: >-
+      pip install -r requirements.txt &&
+      python -c "from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2; ONNXMiniLM_L6_V2()(['warmup'])"
     startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
