@@ -336,11 +336,37 @@ _tokenizer = None
 
 
 def _token_len(text: str) -> int:
-    """Token count under the embedding model's own tokenizer."""
+    """Token count under whichever tokenizer config.EMBED_BACKEND actually
+    uses at query/embed time — this is an offline, one-time ingestion step,
+    so pulling in `transformers` here costs nothing at runtime regardless
+    of backend; it's not on the Render deploy's import path.
+
+    Matching tokenizers matters less than it might look: both the ONNX and
+    torch paths enable truncation at 256 rather than raising, so a
+    mismatch would only make a chunk a few tokens tighter or looser than
+    intended, never a hard failure. Kept consistent anyway since it's easy.
+    """
     global _tokenizer
     if _tokenizer is None:
-        from transformers import AutoTokenizer
-        _tokenizer = AutoTokenizer.from_pretrained(config.EMBED_MODEL)
+        if config.EMBED_BACKEND == "onnx":
+            import retrieval
+            emb = retrieval.get_embeddings()
+            # The tokenizer is a lazy cached_property that reads
+            # tokenizer.json from the on-disk model download, but only
+            # __call__ triggers that download — accessing .tokenizer
+            # directly, before anything has been embedded, hits a
+            # FileNotFoundError. One throwaway call forces it first.
+            emb.embed_query("warmup")
+            _tokenizer = emb._fn.tokenizer
+        else:
+            from transformers import AutoTokenizer
+            _tokenizer = AutoTokenizer.from_pretrained(config.EMBED_MODEL)
+    if config.EMBED_BACKEND == "onnx":
+        # tokenizers.Tokenizer.encode; padding is enabled on this instance
+        # (see retrieval._OnnxMiniLMEmbeddings), so raw .ids includes pad —
+        # attention_mask marks the real (non-pad) tokens.
+        enc = _tokenizer.encode(text)
+        return int(sum(enc.attention_mask))
     return len(_tokenizer.encode(text, add_special_tokens=True))
 
 

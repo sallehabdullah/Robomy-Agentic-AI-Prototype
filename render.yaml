@@ -9,7 +9,14 @@ services:
   - type: web
     name: adipven-assistant-api
     runtime: python
-    plan: free   # see deployment summary — Task 3 memory measurement
+    # Free plan. First deploy on free timed out during startup (see
+    # deployment history) — logs show warmup starting and then nothing
+    # further, consistent with either an OOM kill or the load simply
+    # taking too long on a throttled free instance; the log alone doesn't
+    # distinguish the two. Pursuing the torch-free ONNX embedding swap
+    # (see THRESHOLD.md / deployment summary, Task 3) to cut resident
+    # memory and load time before reconsidering a paid plan.
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health

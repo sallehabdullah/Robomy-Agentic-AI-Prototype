@@ -68,20 +68,57 @@ class VectorStoreUnavailable(RuntimeError):
     """The persisted Chroma store is missing or unreadable."""
 
 
+class _OnnxMiniLMEmbeddings:
+    """Adapts chromadb's bundled ONNXMiniLM_L6_V2 to LangChain's Embeddings
+    interface (`embed_documents` / `embed_query`), so it's a drop-in for
+    the `embedding_function=` argument `langchain_chroma.Chroma` expects.
+
+    No torch, no sentence-transformers. This is what actually removes the
+    ~569MB torch footprint — see config.EMBED_BACKEND.
+    """
+
+    def __init__(self) -> None:
+        from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
+
+        # Model weights land in ~/.cache/chroma/onnx_models on first use —
+        # a single tar.gz from chroma's own S3 bucket, SHA256-verified, not
+        # the dozen-odd HEAD requests HuggingFaceEmbeddings makes against
+        # the HF Hub API. That call chain is itself a plausible contributor
+        # to the original Render timeout, independent of memory.
+        self._fn = ONNXMiniLM_L6_V2()
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [v.tolist() for v in self._fn(texts)]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._fn([text])[0].tolist()
+
+
 @lru_cache(maxsize=1)
 def get_embeddings():
     """Build the embedding function. Cached — loading the model is slow.
 
-    `normalize_embeddings=True` is required for the cosine collection
-    metric to behave: without it, Chroma's L2 distances are unbounded and
-    LangChain's relevance score can fall outside [0, 1], which makes any
-    threshold meaningless (it will also emit a warning to that effect).
+    Backend is chosen by config.EMBED_BACKEND — see that constant for why.
     """
+    if config.EMBED_BACKEND == "onnx":
+        log.debug("loading ONNX embedding backend (%s)", config.EMBED_MODEL)
+        return _OnnxMiniLMEmbeddings()
+
+    if config.EMBED_BACKEND != "torch":
+        raise ValueError(
+            f"Unknown config.EMBED_BACKEND={config.EMBED_BACKEND!r}; "
+            f"expected 'onnx' or 'torch'."
+        )
+
+    # `normalize_embeddings=True` is required for the cosine collection
+    # metric to behave: without it, Chroma's L2 distances are unbounded and
+    # LangChain's relevance score can fall outside [0, 1], which makes any
+    # threshold meaningless (it will also emit a warning to that effect).
     _quiet_hf_env()
     from langchain_huggingface import HuggingFaceEmbeddings
     _quiet_hf_loggers()
 
-    log.debug("loading embedding model %s", config.EMBED_MODEL)
+    log.debug("loading torch embedding backend (%s)", config.EMBED_MODEL)
     return HuggingFaceEmbeddings(
         model_name=config.EMBED_MODEL,
         encode_kwargs={"normalize_embeddings": config.EMBED_NORMALIZE},

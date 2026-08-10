@@ -21,14 +21,36 @@ PERSIST_DIR = str(PROJECT_ROOT / "adipven_chroma_db")
 # Local, no API key, no per-call cost. Long-term target is on-device
 # inference on a Jetson Orin, so this stays local.
 #
-# DO NOT change without re-running ingestion. Changing the encoder
-# invalidates every vector already in PERSIST_DIR.
+# DO NOT change without re-running ingestion. Changing the encoder, OR the
+# backend that runs it, invalidates every vector already in PERSIST_DIR —
+# query and document vectors must come from the same numbers or cosine
+# similarity is comparing apples to noise.
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
+# Which implementation actually runs the model. Both encode the same
+# all-MiniLM-L6-v2 weights, so results should be close, but NOT bit
+# identical — different runtimes, so re-ingest and re-measure THRESHOLD.md
+# after switching.
+#
+#   "torch" — langchain_huggingface.HuggingFaceEmbeddings. Pulls in torch +
+#             sentence-transformers. Measured local RSS after warmup:
+#             ~569MB — over Render's 512MB free-tier ceiling.
+#   "onnx"  — chromadb's bundled ONNXMiniLM_L6_V2 (onnxruntime + tokenizers,
+#             no torch). Adopted specifically to fit the free tier; see
+#             THRESHOLD.md for the re-measurement this required.
+#
+# "torch" is kept as a fallback for local A/B comparison, not because it's
+# expected to be used — flip back only if the onnx numbers don't hold up.
+EMBED_BACKEND = "onnx"
 
 # Normalised vectors + a cosine collection metric are what make relevance
 # scores fall in a usable [0, 1] range. With the defaults (unnormalised
 # vectors, L2 metric) LangChain computes 1 - distance/sqrt(2), which goes
 # negative on this data — so no threshold in [0, 1] means anything.
+#
+# Only affects the "torch" backend: chromadb's ONNXMiniLM_L6_V2 normalises
+# internally regardless of this flag, so under "onnx" it's a no-op kept
+# here for the torch fallback path.
 EMBED_NORMALIZE = True
 CHROMA_COLLECTION_METADATA = {"hnsw:space": "cosine"}
 

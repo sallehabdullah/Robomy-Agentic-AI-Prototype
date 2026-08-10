@@ -165,3 +165,80 @@ how well retrieval performed.
 
 Re-measure everything here whenever the content store changes materially.
 
+## Embedding backend switch: torch -> onnx (2026-08-10)
+
+The Render free-tier deploy timed out waiting on `/health`. Local RSS
+measurement of the torch-backed service (`config.EMBED_BACKEND = "torch"`,
+`langchain_huggingface.HuggingFaceEmbeddings`) was ~569MB — over the
+512MB ceiling — so the store was rebuilt on `config.EMBED_BACKEND =
+"onnx"` (`chromadb.utils.embedding_functions.ONNXMiniLM_L6_V2`, no torch)
+to fit the free tier without paying for Starter.
+
+This encoder swap invalidates every existing vector (`ingest_adipven.py`
+was re-run in full) and is exactly the kind of change this file's opening
+line warns about, so everything above was re-measured against the new
+store before trusting it:
+
+| check | torch (previous) | onnx (this store) |
+|---|---|---|
+| on-topic top-1 score, n=16 | min 0.268, max 0.765 | min 0.268, max 0.765 |
+| off-topic top-1 score, n=6 | min 0.090, max 0.273 | min 0.090, max 0.273 |
+| recall@k targets, n=10 | 8/10 at k=15 | 8/10 at k=15, identical ranks |
+| pricing gate, n=18 | 18/18 | 18/18 |
+| grounding discipline (live), n=8 | — | 8/8 refused, 0 leaks |
+| false refusals (live), n=8 | — | 0/8 |
+
+Scores matched the torch numbers almost to the decimal — the ONNX export
+tracks the original PyTorch weights closely enough that **no retrieval
+constant needed retuning** (`RETRIEVAL_K`, `RELEVANCE_THRESHOLD`,
+`SERVICE_CONTENT_BOOST`, `SUPPLEMENTARY_K` are all unchanged). This
+outcome isn't guaranteed by the model card alone — it's why the re-measure
+happened before trusting it, not after.
+
+Reproduce with `python eval.py --live`.
+
+### Memory result
+
+A `pip freeze`-based local measurement was misleading here: `torch` and
+`transformers` were still installed in the dev environment (kept for the
+`"torch"` fallback branch and earlier work), and `langchain_core`'s
+`language_models/base.py` does a module-level
+`try: from transformers import GPT2TokenizerFast; except ImportError: ...`
+— present locally, it silently imports `transformers` (and `torch`
+behind it) the first time `agent.get_chain()` runs, even though nothing
+in this codebase calls the function that import exists for
+(`get_token_ids()`/`get_num_tokens()` are never used). That produced a
+false reading of ~496MB after a few queries.
+
+The real number came from building `requirements.txt` into an isolated
+venv containing *only* the pinned packages (confirmed via `pip list` that
+torch/transformers/sentence-transformers were genuinely absent) and
+running the actual server there:
+
+| | idle (post-warmup) | after 17 queries |
+|---|---|---|
+| torch backend (polluted local env) | — | ~569MB |
+| onnx backend, clean venv | ~257MB | ~312MB (stable, no growth) |
+
+**~312MB against a 512MB ceiling — fits, with roughly 200MB headroom.**
+This also caught a real bug: `requirements.txt` still listed
+`sentence-transformers` and `langchain-huggingface` after the code switched
+to the onnx backend, which would have shipped `torch` to Render regardless
+of `config.EMBED_BACKEND`. Fixed — see `requirements.txt`'s own comment.
+
+### What this does not explain
+
+The original Render timeout log showed warmup starting and then nothing
+further — no crash, no `ready (N chunks)` line, just silence until Render's
+port scanner gave up. That is consistent with an OOM kill, but was never
+directly confirmed (no explicit "out of memory" line appeared in what was
+pasted), and a slow/throttled network path to whichever host serves the
+embedding model on Render's free CPU could produce the identical symptom.
+The onnx swap also changes that path: ONNXMiniLM_L6_V2 downloads one
+~79MB file over a single HTTPS connection to Chroma's S3 bucket, versus
+HuggingFaceEmbeddings's roughly dozen small HEAD requests to the HF Hub
+API — plausibly faster and more failure-tolerant on a constrained
+instance, but not measured directly against Render's actual network from
+here. If the free-tier deploy times out again after this change, that
+network-path difference — not memory — is the next thing to check.
+

@@ -3,10 +3,21 @@
 # full `pip freeze` here is a transitive dependency pip will resolve on its
 # own from these pins.
 #
-# NOTE: sentence-transformers pulls in torch. torch dominates install size,
-# build time, and resident memory at runtime — see THRESHOLD.md / the
-# deployment summary for the measured memory impact. Do not add packages
-# here casually; on this project torch is already the single biggest cost.
+# EMBEDDING BACKEND: config.EMBED_BACKEND = "onnx" (chromadb's bundled
+# ONNXMiniLM_L6_V2, via onnxruntime — no torch). This is DELIBERATE: the
+# original torch-based setup measured ~569MB resident memory, over
+# Render's 512MB free-tier ceiling; onnx measured ~258MB idle. See
+# THRESHOLD.md for the re-measurement this required.
+#
+# langchain-huggingface and sentence-transformers (which pulls in torch)
+# are intentionally NOT listed here — they are only used by the "torch"
+# fallback branch in retrieval.get_embeddings(), which is dead code unless
+# config.EMBED_BACKEND is changed back to "torch". Do not add them back
+# without re-measuring memory; that's the whole point of this file.
+#
+# onnxruntime / tokenizers / tqdm are NOT pinned separately — chromadb
+# already hard-requires all three (confirmed via `pip show chromadb`), so
+# they resolve automatically from the chromadb pin below.
 
 # --- web service -------------------------------------------------------
 fastapi==0.141.1
@@ -19,9 +30,7 @@ langchain-anthropic==1.5.4
 
 # --- retrieval / vector store --------------------------------------------
 langchain-chroma==1.1.0
-langchain-huggingface==1.2.2
 chromadb==1.5.9
-sentence-transformers==5.7.0
 
 # --- schema / config -------------------------------------------------------
 pydantic==2.13.4
