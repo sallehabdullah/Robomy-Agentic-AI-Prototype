@@ -133,6 +133,16 @@
   }
   .typing span:nth-child(2) { animation-delay: 0.2s; }
   .typing span:nth-child(3) { animation-delay: 0.4s; }
+  /* Progress note beside the dots. Empty until the first status event, so
+     the bubble doesn't reserve blank space before there is anything to
+     say. Muted and smaller than answer text — it is scaffolding, not an
+     answer, and must not read like one. */
+  .status {
+    color: var(--muted);
+    font-size: 0.85rem;
+    font-style: italic;
+  }
+  .status:not(:empty) { margin-left: 8px; }
   @keyframes blink {
     0%, 80%, 100% { opacity: 0.25; }
     40% { opacity: 1; }
@@ -252,9 +262,23 @@
     row.id = "typing-row";
     const bubble = document.createElement("div");
     bubble.className = "bubble";
-    bubble.innerHTML = '<span class="typing"><span></span><span></span><span></span></span>';
+    bubble.innerHTML =
+      '<span class="typing"><span></span><span></span><span></span></span>' +
+      '<span class="status" id="typing-status"></span>';
     row.appendChild(bubble);
     messagesEl.appendChild(row);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  // Measured in production: ~15s passes before the first answer character is
+  // legal to display, against ~1.3s of actual streamed text. Without this the
+  // customer watches three dots for the large majority of the turn. The text
+  // is server-supplied but code-authored (config.STATUS_MESSAGES) — never
+  // model output — so showing it while the grounding gate is still undecided
+  // is safe by construction.
+  function setStatus(text) {
+    const el = document.getElementById("typing-status");
+    if (el) el.textContent = text;
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
@@ -271,7 +295,7 @@
   // The `final` event is authoritative and its answer replaces whatever the
   // deltas accumulated. That is deliberate: the server decides what the
   // customer reads, and a delta is only ever a head start on the same text.
-  async function streamQuery(body, signal, onDelta) {
+  async function streamQuery(body, signal, onDelta, onStatus) {
     const res = await fetch("/query/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -304,6 +328,7 @@
           continue; // never let one malformed frame kill the turn
         }
         if (ev.type === "delta") onDelta(ev.text);
+        else if (ev.type === "status") onStatus(ev.text);
         else if (ev.type === "final") final = ev;
         else if (ev.type === "error") throw new Error(ev.detail || "stream error");
       }
@@ -364,15 +389,26 @@
     let bubble = null;
 
     try {
-      const data = await streamQuery(body, controller.signal, (chunk) => {
-        resetTimeout();
-        if (!bubble) {
-          removeTyping();
-          bubble = addRow("bot", "").querySelector(".bubble");
+      const data = await streamQuery(
+        body,
+        controller.signal,
+        (chunk) => {
+          resetTimeout();
+          if (!bubble) {
+            removeTyping();
+            bubble = addRow("bot", "").querySelector(".bubble");
+          }
+          bubble.textContent += chunk;
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        },
+        (text) => {
+          // Status arrives only before any answer text, so it can never
+          // overwrite a partially streamed answer. Also refreshes the idle
+          // timeout: a turn that is reporting progress is not a hung one.
+          resetTimeout();
+          setStatus(text);
         }
-        bubble.textContent += chunk;
-        messagesEl.scrollTop = messagesEl.scrollHeight;
-      });
+      );
       clearTimeout(timer);
       removeTyping();
 
