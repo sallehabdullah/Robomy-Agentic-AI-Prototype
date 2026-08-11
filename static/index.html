@@ -263,6 +263,59 @@
     if (row) row.remove();
   }
 
+  // --- streaming ------------------------------------------------------------
+  // POST + ReadableStream rather than EventSource, which is GET-only and so
+  // can't carry the query body. Frames are parsed by hand; the format is
+  // simple enough (`data: <json>\n\n`) that a library would be overhead.
+  //
+  // The `final` event is authoritative and its answer replaces whatever the
+  // deltas accumulated. That is deliberate: the server decides what the
+  // customer reads, and a delta is only ever a head start on the same text.
+  async function streamQuery(body, signal, onDelta) {
+    const res = await fetch("/query/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    });
+    if (!res.ok || !res.body) throw new Error("http " + res.status);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let final = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+
+      // Frames are separated by a blank line; the last piece may be partial.
+      const frames = buf.split("\n\n");
+      buf = frames.pop();
+
+      for (const frame of frames) {
+        const line = frame.split("\n").find((l) => l.startsWith("data:"));
+        if (!line) continue;
+        let ev;
+        try {
+          ev = JSON.parse(line.slice(5).trim());
+        } catch (_) {
+          continue; // never let one malformed frame kill the turn
+        }
+        if (ev.type === "delta") onDelta(ev.text);
+        else if (ev.type === "final") final = ev;
+        else if (ev.type === "error") throw new Error(ev.detail || "stream error");
+      }
+    }
+
+    // A stream that ends without `final` was cut short — the answer may be
+    // half-written, so it is treated as a failure rather than shown as if
+    // complete.
+    if (!final) throw new Error("stream ended without a final event");
+    return final;
+  }
+
   input.addEventListener("input", () => {
     input.style.height = "auto";
     input.style.height = Math.min(input.scrollHeight, 120) + "px";
@@ -293,42 +346,56 @@
     // Without a timeout, a cold-start hang leaves the request pending forever
     // and the UI stuck (input disabled, typing indicator never clears). Worst
     // realistic case on free tier is ~50s cold wake + ~26s inference, so 90s.
+    //
+    // Idle-based, not total: a stream that is actively delivering text is
+    // healthy however long it runs, and a fixed 90s ceiling would cut off a
+    // long answer that is arriving normally. The timer is reset on every
+    // delta, so it only fires on genuine silence.
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 90000);
+    let timer = null;
+    const resetTimeout = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => controller.abort(), 90000);
+    };
+    resetTimeout();
+
+    // Created on the first delta, so the typing indicator stays put during
+    // the model's thinking phase instead of showing an empty bubble.
+    let bubble = null;
 
     try {
-      const res = await fetch("/query", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: controller.signal,
+      const data = await streamQuery(body, controller.signal, (chunk) => {
+        resetTimeout();
+        if (!bubble) {
+          removeTyping();
+          bubble = addRow("bot", "").querySelector(".bubble");
+        }
+        bubble.textContent += chunk;
+        messagesEl.scrollTop = messagesEl.scrollHeight;
       });
       clearTimeout(timer);
-
       removeTyping();
 
-      if (!res.ok) {
-        addRow(
-          "bot",
-          "The assistant is temporarily unavailable. Please try again shortly.",
-          true
-        );
-        pending = null;
-        return;
-      }
-
-      const data = await res.json();
-
       if (data.needs_clarification && data.clarifying_question) {
-        addRow("bot", data.clarifying_question);
+        if (bubble) bubble.textContent = data.clarifying_question;
+        else addRow("bot", data.clarifying_question);
         pending = { original_query: text, clarifying_question: data.clarifying_question };
       } else {
-        addRow("bot", data.answer || "(no answer returned)");
+        const finalText = data.answer || "(no answer returned)";
+        // Reconcile: the server's answer wins over the accumulated deltas.
+        // Identical in the normal case; this is what makes a retraction
+        // possible if the final gate ever disagrees with the streaming one.
+        if (bubble) bubble.textContent = finalText;
+        else addRow("bot", finalText);
         pending = null;
       }
+      messagesEl.scrollTop = messagesEl.scrollHeight;
     } catch (err) {
       clearTimeout(timer);
       removeTyping();
+      // A partially streamed answer is not a safe thing to leave on screen —
+      // it may be cut mid-sentence. Drop it and show the failure instead.
+      if (bubble) bubble.closest(".row").remove();
       const msg = (err && err.name === "AbortError")
         ? "That took longer than expected — the server may be waking up. Please try again."
         : "Couldn't reach the assistant — check your connection and try again.";

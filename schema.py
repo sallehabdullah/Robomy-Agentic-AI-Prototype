@@ -5,9 +5,24 @@ Field *descriptions* here are not documentation — they are serialised into
 the tool schema sent to the model, so they are a prompt surface in their
 own right and are worded as instructions.
 
-Field *order* matters too. Structured-output generation fills fields in
-declaration order, so `reasoning` is declared first: it acts as a scratchpad
-the model must write before it commits to an `answer`.
+Field *order* matters too, in two directions. Structured-output generation
+fills fields in declaration order, so:
+
+* `reasoning` is declared FIRST: it acts as a scratchpad the model must
+  write before it commits to an `answer`.
+* `answer` is declared LAST, after `source_ids` and `can_answer`. This is
+  what makes token streaming safe. Streaming means the customer sees the
+  answer text as it is generated, so every grounding gate has to be
+  decidable *before* the first character is emitted — and each gate's
+  inputs are exactly these earlier fields. Were `answer` declared before
+  `source_ids`, the text would reach the customer before the citations that
+  justify it existed, which is the one thing this codebase does not permit.
+  See grounding.check_prestream().
+
+Moving `answer` last also means the model commits to whether it can answer,
+and to which chunks it is answering from, before it writes a word of the
+answer. That was measured, not assumed — see the eval run recorded in
+THRESHOLD.md.
 """
 
 from typing import Literal
@@ -106,25 +121,6 @@ class AdipvenResponse(BaseModel):
         ),
     )
 
-    # Defaulted for the same reason as the booleans above: the model
-    # intermittently omits it, and a dropped turn is worse than an empty
-    # one. An empty answer with can_answer=True is caught explicitly by the
-    # grounding check, so this default cannot leak a blank reply.
-    answer: str = Field(
-        default="",
-        description=(
-            "The customer-facing reply. LEAD WITH THE DIRECT ANSWER in the "
-            "first sentence. No preamble, no restating the question, no "
-            "opening with general company background unless the question "
-            "asked for background. For a 'what services' question, name the "
-            "services first and describe the firm only afterwards, if at "
-            "all. Every factual claim must be supported by a retrieved "
-            "chunk listed in source_ids. Plain declarative prose, no sales "
-            "voice. When using a chunk marked HISTORICAL, state the date "
-            "rather than presenting it as current fact."
-        )
-    )
-
     service_area: ServiceArea = Field(
         default="out_of_scope",
         description="The IP service area the question falls under.",
@@ -158,4 +154,28 @@ class AdipvenResponse(BaseModel):
             "whenever can_answer is False — EXCEPT on a conversational turn "
             "(greeting / small talk), where no contact redirect is wanted."
         ),
+    )
+
+    # LAST on purpose — see module docstring. Everything above is a grounding
+    # gate input; declaring them first is what lets the gate run before this
+    # text is streamed to the customer.
+    #
+    # Defaulted for the same reason as the booleans above: the model
+    # intermittently omits it, and a dropped turn is worse than an empty
+    # one. An empty answer with can_answer=True is caught explicitly by the
+    # grounding check, so this default cannot leak a blank reply.
+    answer: str = Field(
+        default="",
+        description=(
+            "WRITE THIS LAST. The customer-facing reply, supported by the "
+            "chunk IDs you just listed in source_ids — if a claim is not in "
+            "one of those chunks, it does not go here. LEAD WITH THE DIRECT "
+            "ANSWER in the first sentence. No preamble, no restating the "
+            "question, no opening with general company background unless "
+            "the question asked for background. For a 'what services' "
+            "question, name the services first and describe the firm only "
+            "afterwards, if at all. Plain declarative prose, no sales "
+            "voice. When using a chunk marked HISTORICAL, state the date "
+            "rather than presenting it as current fact."
+        )
     )

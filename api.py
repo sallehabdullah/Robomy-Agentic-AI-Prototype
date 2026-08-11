@@ -17,6 +17,7 @@ Render runs (see render.yaml):
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -25,6 +26,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -168,6 +170,12 @@ def query(body: QueryIn):
             detail="the assistant is temporarily unavailable",
         ) from exc
 
+    out = _to_out(response, result, verdict)
+    return out
+
+
+def _to_out(response, result, verdict) -> QueryOut:
+    """Project the internal response onto the customer-facing wire model."""
     out = QueryOut(
         answer=response.answer,
         service_area=response.service_area,
@@ -186,6 +194,83 @@ def query(body: QueryIn):
             "chunks_considered": result.considered,
         }
     return out
+
+
+@app.post("/query/stream")
+def query_stream(body: QueryIn):
+    """Server-sent events form of /query.
+
+    Same contract, same grounding guarantees — see agent.answer_stream().
+    Emits, one JSON object per SSE `data:` line:
+
+        {"type": "delta",  "text": "..."}       answer fragment, append it
+        {"type": "final",  ...QueryOut...,
+                           "streamed": bool}    authoritative; render this
+        {"type": "error",  "detail": "..."}     terminal
+
+    `final` always arrives unless `error` does. Its `answer` is the
+    authoritative text: a client should render it in place of whatever it
+    accumulated from deltas, which makes the deltas a pure optimisation and
+    keeps the grounding gate — not the network — the thing that decides
+    what the customer ends up reading.
+
+    Errors cannot use HTTP status codes once the body has started, so they
+    are in-band. The status line is still 200 for a stream that fails
+    mid-flight; clients must check for the `error` event, and must also
+    treat a stream that ends without `final` as a failure.
+    """
+    if _startup_error is not None:
+        raise HTTPException(
+            status_code=503,
+            detail="service did not start correctly (vector store unavailable)",
+        )
+
+    pending = (
+        agent.PendingClarification(
+            original_query=body.pending.original_query,
+            clarifying_question=body.pending.clarifying_question,
+        )
+        if body.pending
+        else None
+    )
+
+    def events():
+        def sse(payload: dict) -> str:
+            return f"data: {json.dumps(payload)}\n\n"
+
+        try:
+            for ev in agent.answer_stream(body.query, pending):
+                if ev["type"] == "delta":
+                    yield sse(ev)
+                    continue
+                out = _to_out(ev["response"], ev["retrieval"], ev["verdict"])
+                yield sse({
+                    "type": "final",
+                    "streamed": ev["streamed"],
+                    **out.model_dump(),
+                })
+        except VectorStoreUnavailable as exc:
+            log.error("retrieval unavailable mid-request: %s", exc)
+            yield sse({"type": "error", "detail": "retrieval unavailable"})
+        except agent.AgentError as exc:
+            # Same policy as /query: log the detail, put nothing on the wire.
+            log.error("agent call failed: %s", exc)
+            yield sse({
+                "type": "error",
+                "detail": "the assistant is temporarily unavailable",
+            })
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # Render fronts the service with a proxy that will otherwise
+            # buffer the whole body and defeat the point of streaming.
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # --- static chat frontend ---------------------------------------------------
