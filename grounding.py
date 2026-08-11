@@ -193,6 +193,48 @@ def check(
     return GroundingVerdict(Failure.NONE)
 
 
+def check_prestream(
+    query: str,
+    partial: AdipvenResponse,
+    retrieval: RetrievalResult,
+) -> tuple[GroundingVerdict, bool]:
+    """Decide, before any answer text is shown, whether it may be streamed.
+
+    Called mid-generation with a *partial* response: every field except
+    `answer` is final (they are declared before it — see schema.py), and
+    `answer` holds however many characters have arrived so far.
+
+    Returns (verdict, may_stream). `may_stream` is True only when no gate
+    can possibly fire later, so a streamed character is never retracted.
+
+    This adds no new policy. It reuses check() verbatim and then reasons
+    about which of check()'s own gates are still undecided:
+
+      * EMPTY_ANSWER — cannot fire; this is only consulted once `answer`
+        has started arriving, so it is already non-empty.
+      * CLAIMS_WITHOUT_SOURCES — fires only when no reported ID was
+        verified against the retrieved set. That set is final here, so the
+        outcome is already known.
+
+    Everything else check() tests (pricing, conversational, clarification,
+    retrieval emptiness, fabricated IDs, self-reported refusal) reads only
+    fields that are final by now.
+    """
+    verdict = check(query, partial, retrieval)
+    if not verdict.ok:
+        return verdict, False
+
+    # A clarification turn passes check() early and without citations, but
+    # the customer is shown `clarifying_question`, not `answer` — there is
+    # nothing to stream. Buffer it.
+    if partial.needs_clarification and partial.clarifying_question:
+        return verdict, False
+
+    # Streamable iff CLAIMS_WITHOUT_SOURCES is already ruled out.
+    verified = set(partial.source_ids) & retrieval.chunk_ids
+    return verdict, bool(verified)
+
+
 def conversational_reply(
     text: str, detail: str = "", original_reasoning: str = ""
 ) -> AdipvenResponse:

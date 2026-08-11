@@ -66,6 +66,12 @@ passages do not answer the question. Say you don't have that information.
 Cite the exact chunk IDs you used, copied from the [id] labels. They are \
 checked against what was actually retrieved.
 
+Note the field order: you commit to `can_answer` and to `source_ids` \
+*before* you write `answer`. Decide what the passages support, list those \
+chunk IDs, then write the answer from exactly those chunks and nothing \
+else. Do not list an ID you end up not using, and do not write a claim \
+that came from a chunk you did not list.
+
 Passages tagged HISTORICAL describe a past event. A 2017 announcement \
 giving an office address is evidence of the address in 2017, not of the \
 address now. If you use one, say when it was from.
@@ -130,14 +136,14 @@ reasoning: This asks cost. Adipven's content has no fee schedule — the \
 pricing passage explicitly records that no prices were found. Refuse and \
 redirect; do not estimate, and do not offer a range.
 needs_clarification: false
-answer: Adipven's published material doesn't include fees or rates, so I \
-can't give you a price or an estimate. Please contact Adipven directly and \
-the team can help: email info@adipven.com or call +603 2201 4023 / +603 \
-2201 4026.
 service_area: pricing
 can_answer: false
 source_ids: []
 requires_contact: true
+answer: Adipven's published material doesn't include fees or rates, so I \
+can't give you a price or an estimate. Please contact Adipven directly and \
+the team can help: email info@adipven.com or call +603 2201 4023 / +603 \
+2201 4026.
 
 ### Example — a genuinely ambiguous protection question
 
@@ -152,11 +158,11 @@ needs_clarification: true
 clarifying_question: Happy to point you the right way — is it the way the \
 cap works mechanically, the way it looks, or the brand name on it that you \
 want to protect?
-answer: Which protection applies depends on which part of the cap you mean.
 service_area: out_of_scope
 can_answer: false
 source_ids: []
 requires_contact: false
+answer: Which protection applies depends on which part of the cap you mean.
 
 ### Example — an answerable question (do NOT clarify)
 
@@ -166,16 +172,16 @@ reasoning: Specific and answerable. The patents passage states Adipven \
 drafts and files patent applications for domestic and foreign clients \
 across Asia. No ambiguity to resolve — answer it.
 needs_clarification: false
+service_area: patents
+can_answer: true
+source_ids: ["01-services__patents"]
+requires_contact: false
 answer: Yes. Adipven drafts and files patent applications for both \
 domestic and foreign clients throughout Asia, and also conducts novelty, \
 infringement and landscape patent searches. Its patent drafters have \
 technical backgrounds including chemistry, mechanical engineering, \
 electrical and electronic engineering, ICT, biotechnology and \
 microbiology.
-service_area: patents
-can_answer: true
-source_ids: ["01-services__patents"]
-requires_contact: false
 
 ### Example — a greeting (warm steer, NOT a contact redirect)
 
@@ -184,12 +190,12 @@ User: Hello
 reasoning: A greeting, not a question. Conversational; no sources needed.
 conversational: true
 needs_clarification: false
-answer: Hi there! Happy to help with anything about Adipven's IP work — \
-patents, trademarks, industrial design, and more. What brings you here?
 service_area: out_of_scope
 can_answer: false
 source_ids: []
 requires_contact: false
+answer: Hi there! Happy to help with anything about Adipven's IP work — \
+patents, trademarks, industrial design, and more. What brings you here?
 
 ### Example — small talk that is NOT a greeting (still conversational)
 
@@ -199,12 +205,12 @@ reasoning: Not a question about Adipven, and not a request for information \
 — small talk. Conversational; acknowledge it briefly, then steer.
 conversational: true
 needs_clarification: false
-answer: Doing well, thanks for asking! I'm here whenever you have a \
-question about Adipven's IP services — patents, trademarks, and the rest.
 service_area: out_of_scope
 can_answer: false
 source_ids: []
 requires_contact: false
+answer: Doing well, thanks for asking! I'm here whenever you have a \
+question about Adipven's IP services — patents, trademarks, and the rest.
 """
 
 
@@ -395,3 +401,139 @@ def answer(
     # can declare a response safe to show.
     checked, verdict = grounding.enforce(query, response, result)
     return checked, result, verdict
+
+
+# --- streaming ---------------------------------------------------------------
+#
+# answer() above stays the canonical path: cli.py and eval.py use it, and it
+# is the reference the streaming path is checked against. answer_stream()
+# below produces the *same* final result — it only emits the answer text
+# earlier, and only when doing so cannot be retracted.
+#
+# The safety argument, in one line: `answer` is the last field in the schema,
+# so by the time its first character exists every grounding-gate input is
+# final, and grounding.check_prestream() has already ruled. Nothing is
+# emitted before that ruling.
+#
+# Measured on this content store: `reasoning` takes the bulk of generation
+# (~7s of ~16s locally), so the customer still waits for the model to think.
+# Streaming removes the answer-writing wait, not the reasoning wait.
+
+
+def answer_stream(query: str, pending: PendingClarification | None = None):
+    """Generator form of answer(). Yields, in order:
+
+        {"type": "delta", "text": str}
+            A fragment of the customer-facing answer that has already
+            passed the grounding gate. Append it verbatim.
+
+        {"type": "final", "response": AdipvenResponse,
+         "retrieval": RetrievalResult, "verdict": GroundingVerdict,
+         "streamed": bool}
+            Exactly once, last. `response` is authoritative and equals what
+            answer() would have returned. `streamed` says whether any delta
+            was emitted, so a consumer can tell "append finished" from
+            "nothing was streamed, render this now".
+
+    Deltas are an optimisation, never the source of truth: a consumer that
+    ignores them entirely and renders only `final` is still correct.
+    """
+    # Same fast path as answer(). No model call, so nothing to stream — the
+    # reply is already complete before the first byte would have gone out.
+    category = _trivial_category(query) if pending is None else None
+    if category is not None:
+        text = random.choice(config.CONVERSATIONAL_POOLS[category])
+        verdict = GroundingVerdict(
+            grounding.Failure.CONVERSATIONAL,
+            f"trivial {category} (no model call)",
+        )
+        empty = retrieval_mod.RetrievalResult(query=query, considered=0)
+        yield {
+            "type": "final",
+            "response": grounding.conversational_reply(text, verdict.detail),
+            "retrieval": empty,
+            "verdict": verdict,
+            "streamed": False,
+        }
+        return
+
+    search = pending.retrieval_queries(query) if pending else query
+    result = retrieval_mod.retrieve(search)
+
+    latest: AdipvenResponse | None = None
+    gated = False        # has check_prestream run for this turn?
+    may_stream = False   # ...and did it clear the answer for streaming?
+    sent = 0             # characters already emitted
+
+    try:
+        for partial in get_chain().stream({
+            "query": query,
+            "pending": pending,
+            "retrieval": result,
+        }):
+            latest = partial
+
+            if not gated:
+                # Wait for the first character of `answer`. Its existence is
+                # the signal that every earlier field — including source_ids
+                # and can_answer — has finished parsing.
+                if not partial.answer:
+                    continue
+                _, may_stream = grounding.check_prestream(query, partial, result)
+                gated = True
+
+            if may_stream and len(partial.answer) > sent:
+                yield {"type": "delta", "text": partial.answer[sent:]}
+                sent = len(partial.answer)
+
+    except ValidationError as exc:
+        log.warning("model returned an unparseable response: %s", exc)
+        response, res, verdict = _fail_closed(
+            result, f"response failed schema validation: {exc}"
+        )
+        yield _final(response, res, verdict, streamed=sent > 0, query=query)
+        return
+    except Exception as exc:  # noqa: BLE001
+        raise AgentError(
+            f"The language model call failed: {exc}\n"
+            "Check ANTHROPIC_API_KEY is set in .env and that the network is up."
+        ) from exc
+
+    if latest is None:
+        # The stream produced nothing at all. Treat it like any other
+        # uncertainty path rather than returning an empty turn.
+        response, res, verdict = _fail_closed(result, "stream yielded no output")
+        yield _final(response, res, verdict, streamed=False, query=query)
+        return
+
+    # The full gate runs on the completed response regardless of what was
+    # streamed. This is the same call answer() makes, so the two paths cannot
+    # disagree about the final result.
+    checked, verdict = grounding.enforce(query, latest, result)
+    yield _final(checked, result, verdict, streamed=sent > 0, query=query)
+
+
+def _final(response, result, verdict, *, streamed: bool, query: str) -> dict:
+    """Build the terminal event, and refuse to let the two paths diverge.
+
+    If text was streamed, check_prestream() promised the gate would pass.
+    Should that promise ever be broken, the customer has already seen text
+    the gate later rejected — the exact failure this design exists to
+    prevent. It cannot be un-sent, so it is logged at CRITICAL and the
+    authoritative `response` in this event still carries the refusal, which
+    a conforming consumer renders in place of the streamed text.
+    """
+    if streamed and not verdict.ok:
+        log.critical(
+            "STREAMED TEXT FAILED THE FINAL GATE (%s: %s) for query %r — "
+            "check_prestream() and check() disagreed; this is a bug in the "
+            "streaming gate, not a model failure",
+            verdict.failure.value, verdict.detail, query,
+        )
+    return {
+        "type": "final",
+        "response": response,
+        "retrieval": result,
+        "verdict": verdict,
+        "streamed": streamed,
+    }
