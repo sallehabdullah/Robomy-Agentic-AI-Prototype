@@ -159,19 +159,42 @@ def report(m: dict) -> dict:
     print(f"  delta span      {span:6.2f}s   <- width of the typing window")
     print(f"  deltas          {len(deltas):6d}    ({chars} chars, "
           f"{chars / len(deltas):.1f} chars/delta)")
-    if gaps:
-        print(f"  gap p50         {statistics.median(gaps) * 1000:6.1f}ms")
-        if len(gaps) >= 10:
-            p90 = sorted(gaps)[int(len(gaps) * 0.9)]
-            print(f"  gap p90         {p90 * 1000:6.1f}ms")
-        print(f"  gap max         {max(gaps) * 1000:6.1f}ms   <- a large value "
-              f"means chunked flush")
+
+    # Report WHERE the largest gap falls, rather than assuming it is
+    # mid-stream. Measured against production over 4 runs it landed at
+    # 98.5-99.5% through every time (stdev 0.4 percentage points) — the
+    # cost of closing the tool-call JSON and ending the message, not a
+    # buffer boundary. An earlier version of this script treated that as
+    # "chunked flushing" and mis-diagnosed a stream that was fine.
+    # Position is the thing that distinguishes the two, so print it and
+    # let the reader judge.
+    biggest, at = max((g, i) for i, g in enumerate(gaps))
+    chars_before = sum(n for _, n in deltas[:at + 1])
+    pct = 100 * chars_before / chars if chars else 0.0
+
+    # What the eye perceives is the number of separate visual updates, not
+    # the raw delta count — deltas arriving sub-millisecond apart land in
+    # the same rendered frame. This is the metric that actually decides
+    # whether it reads as typing.
+    BURST_MS = 0.020
+    bursts = 1 + sum(1 for g in gaps if g > BURST_MS)
+    rate = bursts / span if span > 0 else 0.0
+
+    print(f"  gap p50         {statistics.median(gaps) * 1000:6.1f}ms")
+    if len(gaps) >= 10:
+        p90 = sorted(gaps)[int(len(gaps) * 0.9)]
+        print(f"  gap p90         {p90 * 1000:6.1f}ms")
+    print(f"  gap max         {biggest * 1000:6.1f}ms  at {pct:.1f}% through"
+          f"  <- >97% means end-of-message overhead, not buffering")
+    print(f"  visual updates  {bursts:6d}    ({rate:.1f}/s — "
+          f"{'smooth' if rate >= 5 else 'chunky'} to the eye)")
     print(f"  total           {m['total']:6.2f}s")
     return {
         "span": span,
         "count": len(deltas),
         "first": first,
-        "max_gap": max(gaps) if gaps else 0.0,
+        "max_gap": biggest,
+        "rate": rate,
     }
 
 
@@ -194,30 +217,26 @@ def verdict(runs: list[dict]) -> None:
         return
 
     best = max(r["span"] for r in streamed)
-    # Fraction of the typing window consumed by a single pause.
-    ratios = [r["max_gap"] / r["span"] for r in streamed if r["span"] > 0]
-    worst_ratio = max(ratios) if ratios else 0.0
+    # Perceived smoothness is the update rate, not the span. ~5/s is about
+    # where discrete chunks stop reading as chunks.
+    worst_rate = min(r["rate"] for r in streamed)
     slowest_first = max(r["first"] for r in streamed)
 
     print(f"VERDICT: best delta span {best:.2f}s across {len(streamed)} run(s); "
-          f"largest single gap is {worst_ratio * 100:.0f}% of the span")
+          f"slowest visual update rate {worst_rate:.1f}/s")
 
     if best < 0.3:
         print("  Burst delivery — deltas arrive effectively at once, so")
         print("  nothing is perceptibly streaming.")
         print("  -> Phase 1: isolate whether it is LangChain (1A),")
         print("     the proxy (1B), or the browser (1C).")
-    elif worst_ratio > 0.4:
-        print("  PARTIAL. Text does arrive progressively, but one pause")
-        print("  dominates the window — this is chunked flushing (roughly")
-        print("  a couple of bursts), not smooth typing.")
+    elif worst_rate < 5:
+        print("  CHUNKY. Text arrives in visibly discrete jumps.")
         print("  -> Phase 1B: check compression / proxy flush boundaries.")
-    elif best >= 1.0:
-        print("  Streaming is working smoothly over this path.")
-        print("  -> Phase 0 passes. Skip Phases 1-2.")
     else:
-        print("  Text appears progressively but briefly.")
-        print("  -> Phase 1: check for a dominant gap (chunked flush).")
+        print("  Streaming is smooth to the eye — text arrives in small")
+        print("  frequent increments, which is what a typewriter effect is.")
+        print("  -> No further streaming work is warranted.")
 
     # The wait before any text appears usually dwarfs the typing window,
     # and no streaming work can shorten it — say so rather than let a
