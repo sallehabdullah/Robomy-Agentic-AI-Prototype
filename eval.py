@@ -121,6 +121,25 @@ def eval_threshold_separation() -> None:
     if config.RELEVANCE_THRESHOLD <= max(off):
         print(f"  !! THRESHOLD AT/BELOW an off-topic score seen in this eval")
 
+    # Tier 1 content (contact details) has been observed sitting close to
+    # the gate — "where is your office located" scored 0.268 against a 0.25
+    # threshold, a margin of 0.018. Raising the threshold to close an
+    # off-topic leak would reject that query outright, so the threshold
+    # itself can't move; the actual risk is silent drift on re-ingest
+    # pushing a real query under the gate with no warning. Flag any
+    # on-topic query within MARGIN_WARN of the threshold so drift shows up
+    # as a loud eval line, not a refusal a customer hits first.
+    MARGIN_WARN = 0.03
+    close = sorted(
+        (s, q) for q, s in zip(ON_TOPIC, on)
+        if s - config.RELEVANCE_THRESHOLD < MARGIN_WARN
+    )
+    if close:
+        print(f"\n  !! ON-TOPIC QUERIES WITHIN {MARGIN_WARN} OF THRESHOLD "
+              f"(re-ingest risk):")
+        for s, q in close:
+            print(f"       {s:.3f}  (margin {s - config.RELEVANCE_THRESHOLD:+.3f})  {q[:56]}")
+
 
 def eval_gate_correctness() -> None:
     section("2. Off-topic gate — end-to-end (with corpus-imbalance corrections active)")
