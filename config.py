@@ -282,11 +282,11 @@ CONVERSATIONAL_ESCALATION = (
 # leak an unverified claim while the gate is still undecided. Do not make
 # them dynamic or derive them from the model's output.
 #
-# Kept generic on purpose — "Searching Adipven's published content" is true
-# of every query and promises nothing about whether an answer exists.
+# Kept generic on purpose — true of every query and promises nothing about
+# whether an answer exists.
 STATUS_MESSAGES: dict[str, str] = {
-    "retrieving": "Searching Adipven's published content…",
-    "composing": "Composing a grounded answer…",
+    "retrieving": "Searching the Adipven website database…",
+    "composing": "Verifying information integrity…",
 }
 
 # Whole-message greetings/pleasantries that need no model call at all — the

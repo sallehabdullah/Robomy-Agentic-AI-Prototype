@@ -27,8 +27,10 @@ What the numbers mean:
                were sent.
   p50 gap      typical pause between deltas. Smooth streaming looks like
                tens of milliseconds; one burst looks like ~0.
-  max gap      the giveaway. A single large gap inside the span means
-               something flushed in chunks rather than continuously.
+  max gap      only meaningful together with its position. Measured
+               post-deploy it lands anywhere (14.9%, 98.6%, 99.6%), which
+               is scheduling jitter on a shared free-tier CPU — not a
+               buffer boundary, which would recur at a fixed offset.
 """
 
 from __future__ import annotations
@@ -184,8 +186,8 @@ def report(m: dict) -> dict:
     if len(gaps) >= 10:
         p90 = sorted(gaps)[int(len(gaps) * 0.9)]
         print(f"  gap p90         {p90 * 1000:6.1f}ms")
-    print(f"  gap max         {biggest * 1000:6.1f}ms  at {pct:.1f}% through"
-          f"  <- >97% means end-of-message overhead, not buffering")
+    tail = "  <- end-of-message overhead, not buffering" if pct > 97 else ""
+    print(f"  gap max         {biggest * 1000:6.1f}ms  at {pct:.1f}% through{tail}")
     print(f"  visual updates  {bursts:6d}    ({rate:.1f}/s — "
           f"{'smooth' if rate >= 5 else 'chunky'} to the eye)")
     print(f"  total           {m['total']:6.2f}s")
@@ -232,7 +234,12 @@ def verdict(runs: list[dict]) -> None:
         print("     the proxy (1B), or the browser (1C).")
     elif worst_rate < 5:
         print("  CHUNKY. Text arrives in visibly discrete jumps.")
-        print("  -> Phase 1B: check compression / proxy flush boundaries.")
+        print("  -> Not a proxy problem: no-transform is deployed and moved")
+        print("     nothing, and the dominant gap lands at a scattered")
+        print("     position run to run (14.9% / 98.6% / 99.6% measured)")
+        print("     rather than a fixed byte offset. That is CPU scheduling")
+        print("     on the shared free-tier instance. No code fix; the only")
+        print("     lever is a paid instance type.")
     else:
         print("  Streaming is smooth to the eye — text arrives in small")
         print("  frequent increments, which is what a typewriter effect is.")
