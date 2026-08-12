@@ -31,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import agent
+import config
 import retrieval
 from retrieval import VectorStoreUnavailable
 
@@ -203,10 +204,17 @@ def query_stream(body: QueryIn):
     Same contract, same grounding guarantees — see agent.answer_stream().
     Emits, one JSON object per SSE `data:` line:
 
+        {"type": "status", "text": "..."}       progress note, display it
         {"type": "delta",  "text": "..."}       answer fragment, append it
         {"type": "final",  ...QueryOut...,
                            "streamed": bool}    authoritative; render this
         {"type": "error",  "detail": "..."}     terminal
+
+    `status` text is code-authored (config.STATUS_MESSAGES), never model
+    output, so it is safe to show while the grounding gate is still
+    undecided — which is the entire window it covers. Clients should
+    replace it, not append to it, and must discard it once `delta` or
+    `final` arrives.
 
     `final` always arrives unless `error` does. Its `answer` is the
     authoritative text: a client should render it in place of whatever it
@@ -243,6 +251,16 @@ def query_stream(body: QueryIn):
                 if ev["type"] == "delta":
                     yield sse(ev)
                     continue
+                if ev["type"] == "status":
+                    # Resolve the stage key to its code-authored text here
+                    # rather than shipping the key to the browser, so the
+                    # wording stays in config.py with the other customer-
+                    # facing strings. Unknown stages are dropped rather
+                    # than surfaced raw.
+                    text = config.STATUS_MESSAGES.get(ev["stage"])
+                    if text:
+                        yield sse({"type": "status", "text": text})
+                    continue
                 out = _to_out(ev["response"], ev["retrieval"], ev["verdict"])
                 yield sse({
                     "type": "final",
@@ -264,7 +282,16 @@ def query_stream(body: QueryIn):
         events(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            # `no-transform` is the Phase 1B fix (see
+            # STREAMING_IMPLEMENTATION_PLAN.md). Measured in production,
+            # deltas arrived in ~2 bursts separated by a 400-900ms pause
+            # rather than flowing smoothly. Each SSE frame here is tiny
+            # (~50 bytes), and an intermediary that gzips or otherwise
+            # transforms the stream will coalesce them into buffer-sized
+            # chunks, which is exactly that symptom. `no-transform` tells
+            # proxies not to, and unlike Content-Encoding it is advisory
+            # to every hop rather than a claim about what we sent.
+            "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             # Render fronts the service with a proxy that will otherwise
             # buffer the whole body and defeat the point of streaming.

@@ -267,6 +267,28 @@ CONVERSATIONAL_ESCALATION = (
     "registration, or enforcement. What would you like to know?"
 )
 
+# --- streaming status ------------------------------------------------------
+# Shown while the model is working, before any answer text is legal to
+# display. Measured in production: time-to-first-answer-character is
+# ~15-16s, of which the streamed answer itself occupies only ~1.3s. The
+# customer therefore spends roughly 90% of the turn watching nothing, and
+# that gap is NOT streamable — `reasoning` is the first schema field and
+# must complete before the grounding gate can rule (see
+# grounding.check_prestream), and it is internal text that must never be
+# shown regardless.
+#
+# These strings are code-authored and constant. That is the whole point:
+# they carry no model output, so they have no grounding surface and cannot
+# leak an unverified claim while the gate is still undecided. Do not make
+# them dynamic or derive them from the model's output.
+#
+# Kept generic on purpose — "Searching Adipven's published content" is true
+# of every query and promises nothing about whether an answer exists.
+STATUS_MESSAGES: dict[str, str] = {
+    "retrieving": "Searching Adipven's published content…",
+    "composing": "Composing a grounded answer…",
+}
+
 # Whole-message greetings/pleasantries that need no model call at all — the
 # agent answers these in code, instantly and at zero API cost. Matching is
 # exact on the normalised (lowercased, punctuation-stripped) message, so

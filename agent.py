@@ -423,6 +423,12 @@ def answer(
 def answer_stream(query: str, pending: PendingClarification | None = None):
     """Generator form of answer(). Yields, in order:
 
+        {"type": "status", "stage": str}
+            Progress marker for the pre-answer wait. `stage` is a key into
+            config.STATUS_MESSAGES; the text is code-authored and constant,
+            never model output, so this event carries no grounding surface.
+            Purely presentational — a consumer may ignore it entirely.
+
         {"type": "delta", "text": str}
             A fragment of the customer-facing answer that has already
             passed the grounding gate. Append it verbatim.
@@ -457,8 +463,17 @@ def answer_stream(query: str, pending: PendingClarification | None = None):
         }
         return
 
+    # Status events bracket the two phases the customer would otherwise
+    # experience as undifferentiated dead air. Emitted before the work they
+    # describe, so each one reaches the client while that phase is running.
+    yield {"type": "status", "stage": "retrieving"}
+
     search = pending.retrieval_queries(query) if pending else query
     result = retrieval_mod.retrieve(search)
+
+    # Retrieval is fast (~0.08s locally); essentially the whole wait is the
+    # model generating `reasoning` before it may write `answer`.
+    yield {"type": "status", "stage": "composing"}
 
     latest: AdipvenResponse | None = None
     gated = False        # has check_prestream run for this turn?
