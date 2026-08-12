@@ -131,7 +131,10 @@ class AdipvenResponse(BaseModel):
             "True only if the retrieved chunks actually answer the question "
             "asked. False if they are merely on the same topic, or if "
             "answering would require IP knowledge from outside the "
-            "retrieved text."
+            "retrieved text. When the message contains several requests, "
+            "this is True if the chunks answer at least one of them — "
+            "answer those parts and decline the rest inside `answer`. One "
+            "unanswerable part does not make this False."
         )
     )
 
@@ -176,6 +179,12 @@ class AdipvenResponse(BaseModel):
             "question, name the services first and describe the firm only "
             "afterwards, if at all. Plain declarative prose, no sales "
             "voice. When using a chunk marked HISTORICAL, state the date "
-            "rather than presenting it as current fact."
+            "rather than presenting it as current fact. Break an "
+            "enumeration of more than about three items onto separate lines "
+            "as a numbered or hyphen list instead of running them into one "
+            "paragraph — in plain text, since markdown is displayed "
+            "literally rather than rendered. If the message asked several "
+            "things, address each part in turn and say plainly which ones "
+            "you cannot answer."
         )
     )
