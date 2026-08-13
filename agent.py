@@ -486,9 +486,12 @@ def answer(
 # final, and grounding.check_prestream() has already ruled. Nothing is
 # emitted before that ruling.
 #
-# Measured on this content store: `reasoning` takes the bulk of generation
-# (~7s of ~16s locally), so the customer still waits for the model to think.
-# Streaming removes the answer-writing wait, not the reasoning wait.
+# Measured on this content store: `reasoning` is still the larger half of
+# generated output (~58% by characters, down from ~70% before it was cut to
+# telegraphic notes), so the customer waits for the model to think either
+# way. Streaming removes the answer-writing wait, not the reasoning wait —
+# shortening `reasoning` is what shortens the reasoning wait, and that is a
+# prompt change, not a streaming one.
 
 
 def answer_stream(query: str, pending: PendingClarification | None = None):
@@ -542,8 +545,9 @@ def answer_stream(query: str, pending: PendingClarification | None = None):
     search = pending.retrieval_queries(query) if pending else query
     result = retrieval_mod.retrieve(search)
 
-    # Retrieval is fast (~0.08s locally); essentially the whole wait is the
-    # model generating `reasoning` before it may write `answer`.
+    # Retrieval is fast (0.13-0.15s locally, measured over the full path
+    # including the supplementary filtered search); essentially the whole
+    # wait is the model generating `reasoning` before it may write `answer`.
     yield {"type": "status", "stage": "composing"}
 
     latest: AdipvenResponse | None = None

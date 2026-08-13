@@ -365,3 +365,28 @@ be on the order of Strategy 1's measured 30ms — i.e., the model writes the
 parses the stream, rather than the ~1-2s the whole-response rate suggests —
 then Strategy 2 provides no real benefit over Strategy 1 either, and the
 right call becomes "skip both, ship only the status indicator."
+
+---
+
+## Status update — the `reasoning` dead time was addressable after all
+
+This report treats the "~7s of `reasoning`" as fixed background that no
+streaming strategy can touch. That framing was right about *streaming* and
+wrong about the dead time being immovable, so it is worth recording what
+changed rather than leaving the conclusion to read as final.
+
+`reasoning` was measured at ~70% of generated output (3,214 chars vs 1,384
+for `answer`, three queries). It was then cut to telegraphic notes with an
+explicit closing verdict — concise chain-of-thought, per Chain of Draft
+(arXiv 2502.18600) — bringing it to ~58% of output, a 44% reduction in mean
+length, with no eval regression.
+
+So the dead time this report identifies as dominant is a *prompt* variable,
+not a floor. Both this report's conclusions still hold as written — the
+status indicator was the right call, and Strategy 2's premise was
+separately falsified — but "the real dead time is the ~7s of `reasoning`"
+should be read as "…which is itself tunable", not as a constant.
+
+The remaining large factor is the deployment tier: the same query measured
+4.8s locally and 10.5–21.7s on Render's free instance, for identical work.
+That is larger than anything in this report's scope.
