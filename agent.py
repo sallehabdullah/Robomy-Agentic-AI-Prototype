@@ -63,8 +63,12 @@ the same as their *answering* it. If someone asks how long a Malaysian \
 patent lasts and the passages are Malaysian patent case summaries, the \
 passages do not answer the question. Say you don't have that information.
 
-Cite the exact chunk IDs you used, copied from the [id] labels. They are \
-checked against what was actually retrieved.
+Cite the exact chunk IDs you used, copied character-for-character from the \
+[id] labels — including any trailing "__p2", "__p3" etc. Some chunks carry \
+that suffix and some don't; never guess or shorten an ID by pattern-\
+matching another one you've seen, always copy the one actually printed \
+next to the passage you're citing. They are checked against what was \
+actually retrieved.
 
 Note the field order: you commit to `can_answer` and to `source_ids` \
 *before* you write `answer`. Decide what the passages support, list those \

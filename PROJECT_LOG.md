@@ -158,6 +158,24 @@ Deliberately narrow rather than general synonym expansion — broadening it risk
 
 Committed as a follow-up commit on this branch, ready to merge to `master` per the user's request.
 
+---
+
+## 2026-08-13 (later still) — Production bug: false refusal on "what services does Adipven offer" (fixed)
+
+**Reported:** the very first live customer exchange after the `fe06109` deploy asked "What services does Adipven provide?" and got the fail-closed contact redirect. Every exchange after that, on the same question, worked fine.
+
+**Ruled out first:** cold start. `api.py`'s `lifespan` blocks on `retrieval.warmup()` before uvicorn serves any request, and `render.yaml`'s build command pre-fetches the ONNX encoder at build time specifically so the first request after deploy never pays that cost — see the comment there from the original free-tier timeout incident. A slow/incomplete warmup would show up as a 503 or a slow response, not a wrong grounded refusal.
+
+**Diagnosis:** ran `agent.answer("What services does Adipven offer?")` 20 times locally against the same index that was just deployed. **12/20 (60%) false-refused**, every single time with the identical grounding failure: `reported_source_ids_not_in_retrieved_set: not in retrieved set: ['01-services__trademarks']`. Not a rare stochastic event — a coin-flip-ish, reproducible defect that a real customer's first message had better-than-even odds of hitting.
+
+**Root cause, and confirmed pre-existing (not introduced by today's case-study removal):** `01-services__patents` is the *only* patents chunk short enough to not need sub-chunking, so it has no `__pN` suffix — and it's the ID used in both of `agent.py`'s "answerable question" few-shot examples (previously lines 246 and 266). The model pattern-matched "service IDs look like `01-services__{name}`, no suffix" from repetition. Asked to name multiple services (which correctly wants to cite trademarks among them), it reconstructed `01-services__trademarks` by analogy instead of copying the real ID off the `[id]` label it was shown — which is `01-services__trademarks__p1/__p2/__p3`, because trademarks content is long enough to require sub-chunking. `grounding.py`'s `FABRICATED_SOURCE_IDS` check correctly caught it and failed closed — every gate behaved correctly given its input; the defect was upstream, in what the few-shot examples taught about ID shape. Confirmed pre-existing: whether a service chunk needs a `__pN` suffix depends only on that chunk's token length after dedupe, which today's case-study exclusion does not touch (verified earlier the same day — every non-case_study chunk count is identical pre/post that change).
+
+**Fix — `agent.py`, the citation instruction only, no few-shot rewrite:** added an explicit line telling the model to copy IDs character-for-character off the `[id]` label, that some carry a `__pN` suffix and some don't, and never to infer or shorten one by pattern-matching another example. Chose this over rewriting the two patents few-shots to use a multi-part ID instead, since that risks the same overfitting problem in a new direction and this project has previously optimized deliberately against adding prompt weight (the concise-CoT change, same day).
+
+**Verified:** the exact failing query, 20/20 clean after the fix (was 12/20 failing). Two more multi-part-ID queries probed for generalization, not just the reported one — "do you offer IP training or talks" and "does Adipven register geographical indications" (both have `__pN`-suffixed answer chunks) — 0/10 false refusals each. Full `eval.py --live` battery re-run clean: 16/16 on-topic, 5/6 off-topic (pre-existing sci-fi leak, unrelated), recall@15 10/10, 8/8 adjacent-uncovered refused, 0/8 false refusals, forced fabrication still fails closed, 18/18 pricing.
+
+**Pushed directly to `master`** (not a branch) — this is a bug fix to existing behavior, not an experiment; per the same reasoning as prior direct-to-master fixes in this log (e.g. the people-retrieval incident).
+
 ## Open items / things not yet resolved
 
 - **Deploy confirmation for the concise-CoT change:** now actually pushed to `master` (see correction above) — Render auto-deploy should be picking it up, but not yet verified against production with `measure_stream.py`.
