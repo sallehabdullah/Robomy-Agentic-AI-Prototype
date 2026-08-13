@@ -60,18 +60,21 @@ class AdipvenResponse(BaseModel):
 
     reasoning: str = Field(
         description=(
-            "Think here BEFORE writing the answer. Work through, briefly: "
-            "(1) which retrieved chunk IDs, if any, actually address the "
-            "question asked — not merely the same topic; "
-            "(2) whether any part of the answer you intend to give is not "
-            "stated in those chunks, in which case cut it; "
-            "(3) whether the question touches cost, fees, quotes or "
-            "timelines, which must never be answered; "
-            "(4) whether the message is a greeting / small talk / off-topic "
-            "rather than a factual question. "
-            "Note: content in a chunk tagged HISTORICAL is still usable — "
-            "state the date rather than declining. This field is internal "
-            "and is not shown to the customer."
+            "Scratchpad — think here BEFORE writing the answer, in notes, "
+            "not prose. Telegraphic: fragments, no full sentences, no "
+            "restating the question, no explaining yourself to a reader. "
+            "Aim for 50 words. Run only the checks in play: "
+            "(1) which chunk IDs genuinely address the question, not merely "
+            "share its topic; (2) anything you meant to say that those "
+            "chunks do not state — cut it; (3) cost / fees / timelines, "
+            "never answerable; (4) greeting or small talk rather than a "
+            "question. "
+            "Then close with an explicit verdict: the IDs you will cite, "
+            "and answerable yes/no. Never leave the verdict implicit — if "
+            "usable chunks exist, name them and say yes. Being brief here "
+            "must not turn into declining a question you can answer. "
+            "HISTORICAL chunks are usable — give the date instead of "
+            "declining. Internal; never shown to the customer."
         )
     )
 
