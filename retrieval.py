@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -27,6 +28,55 @@ from pathlib import Path
 import config
 
 log = logging.getLogger(__name__)
+
+
+# Query-time-only phrase bridge. adipven_content/ is a verbatim extraction
+# store (see CLAUDE.md — "never infer, complete, or smooth over") and must
+# never carry synthetic customer-facing wording, so a lay phrasing with no
+# vocabulary overlap with the actual service page cannot be fixed by
+# editing the content store. It has to live here instead, as a query
+# rewrite the customer never sees.
+#
+# Added after removing case studies from the index (see PROJECT_LOG.md,
+# "exclude-case-studies" branch): case-study narrative prose used to be the
+# only text in the store phrased the way a layperson describes a problem
+# ("how do I stop people copying the shape of my product"), so it was
+# accidentally the thing that got those queries past the off-topic gate —
+# the actual answer (industrial_design) only got surfaced afterwards, via
+# the boost/supplementary search. Removing case studies removed that
+# accidental bridge along with the noise. This restores just the bridge,
+# narrowly, without reintroducing the noise.
+#
+# Deliberately narrow: each pattern targets one specific documented
+# false-refusal, not general synonym expansion — broadening this to catch
+# more phrasings risks pulling off-topic queries over the raw-score gate
+# too (see THRESHOLD.md, "Why 0.25": the sci-fi-novel leak already scores
+# higher than these on-topic queries did before this fix).
+QUERY_EXPANSIONS: list[tuple[re.Pattern, str]] = [
+    (
+        re.compile(r"\b(shape|look|appearance)\b.{0,40}\b(cop(?:y|ying|ied)|imitat|protect)", re.I),
+        "industrial design protection",
+    ),
+    (
+        re.compile(r"\b(protect|stop|prevent)\b.{0,40}\b(shape|look|appearance|cop(?:y|ying|ied))", re.I),
+        "industrial design protection",
+    ),
+]
+
+
+def _expand(queries: list[str]) -> list[str]:
+    """Add bridge queries alongside the customer's own phrasing.
+
+    Additive only — the original queries are never dropped or rewritten in
+    place, so this can only ever help a query clear the off-topic gate, not
+    hide what the customer actually asked from the rest of retrieve().
+    """
+    extra = []
+    for q in queries:
+        for pattern, bridge in QUERY_EXPANSIONS:
+            if pattern.search(q):
+                extra.append(bridge)
+    return queries + extra
 
 
 # The encoder is loaded from a local cache, so Hugging Face's
@@ -254,6 +304,7 @@ def retrieve(
     queries = [query] if isinstance(query, str) else [q for q in query if q.strip()]
     if not queries:
         return RetrievalResult(query="", considered=0)
+    queries = _expand(queries)
 
     store = get_vectorstore()
     best: dict[str, tuple] = {}
