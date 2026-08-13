@@ -70,8 +70,16 @@ Running chronological record of decisions and why they were made. Git history ha
 
 ---
 
+---
+
+## 2026-08-13 (later) — Correction: concise-CoT was not actually pushed yet
+
+The previous entry stated the concise-CoT change (`37fb25e`, `ec94600`) was "committed and pushed to `master`" — that was wrong. Both commits existed only locally; `origin/master` was 2 commits behind. Pushed now (`git push origin master`, `5e55ba1..b47a8ec`), bundled with the project-log/UI-brief/chroma_db commit made earlier today. Render auto-deploy should pick this up from the push.
+
+---
+
 ## Open items / things not yet resolved
 
-- **Deploy confirmation for the concise-CoT change:** pushed to `master`, auto-deploy should have picked it up, but not yet verified against production with `measure_stream.py`.
+- **Deploy confirmation for the concise-CoT change:** now actually pushed to `master` (see correction above) — Render auto-deploy should be picking it up, but not yet verified against production with `measure_stream.py`.
 - **`backup/` directory not gitignored** — cosmetic, not urgent.
 - **`torch` embedding backend** — confirmed dead code, kept intentionally as a documented switch; revisit only if there's a reason to actually support it again.
