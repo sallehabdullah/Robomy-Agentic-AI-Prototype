@@ -136,6 +136,28 @@ Both are industrial-design questions, and `01-services__industrial_design` is st
 
 **Side note, unrelated to the change:** merely *running* `eval.py` dirties the committed `adipven_chroma_db/` (sqlite + HNSW files rewrite on read), so `git status` shows modifications after any eval run. Restore with `git checkout -- adipven_chroma_db`.
 
+---
+
+## 2026-08-13 (branch) — Fixed: the two hard-refusal regressions, via query-time bridge (option a)
+
+Follow-up to the entry above, same branch. User asked to deploy the case-study exclusion; the two hard-refusals were surfaced as a blocker first and the user chose to fix them before merging rather than ship with a known regression or lower the threshold (the latter rejected per `THRESHOLD.md`'s existing "Why 0.25" — the sci-fi-novel leak already scores above both failing queries, so a lower threshold admits it too).
+
+**Constraint surfaced mid-fix:** the obvious fix — add lay-phrased wording to `01-services.md`'s Industrial Design section — conflicts with this project's `CLAUDE.md`, which governs `adipven_content/` as a verbatim extraction store ("never infer, complete, or smooth over," "never merge outside/general knowledge") on the stated grounds that "errors here become permanent defects with no upstream source to correct them." The bridging phrase would be synthetic wording never on adipven.com. Surfaced to the user rather than silently edited around; user chose to keep the extraction file untouched and put the fix in code instead.
+
+**Fix — `retrieval.py`, `QUERY_EXPANSIONS` + `_expand()`.** A small, narrowly-targeted regex map, checked against the raw query before the off-topic gate runs. Two patterns, both firing only on the specific documented failures (shape/appearance + copy/protect wording), each expanding to the query `"industrial design protection"` — added via the *existing* multi-query union mechanism in `retrieve()` (the same mechanism `eval_supplementary_search`'s clarification-reply case already exercised), not a new code path. Additive only: the customer's original query is always still searched too, so a bridge match can only add a candidate, never suppress the real query.
+
+Deliberately narrow rather than general synonym expansion — broadening it risks pulling off-topic queries over the raw-score gate the same way case studies used to (that was the root cause of the regression in the first place).
+
+**Result, both previously-failing queries now on-topic and correctly answered, live:**
+- "how do I protect the shape of my product" — was raw_max 0.181 (hard-reject), now 27 kept, `01-services__industrial_design` top hit at 0.610.
+- "I designed a new bottle cap, how do I stop people copying it?" — was raw_max 0.244, now 35 kept, same top hit.
+
+**Regression check, full battery re-run:** offline on-topic 15/16 → **16/16**; `eval_supplementary_search`'s clarification-reply case FAIL → **ok** (0 → 39 kept); off-topic leak on "recommend a good science fiction novel" **unchanged** at 3 kept (the expansion patterns don't match that query, confirmed by design and by measurement); recall@15 still 10/10. Live: 8/8 adjacent-uncovered refused, 0/8 false refusals, forced fabrication still fails closed, 18/18 pricing — all unchanged from the prior entry.
+
+**What this doesn't fix:** the underlying score-separation number (on-topic min − off-topic max = −0.032, worse than master's −0.009) is unchanged — the bridge patches the two known failure phrasings, it doesn't repair the gate's margin generally. A lay-phrased query outside these two patterns that hits the same gap would still hard-refuse. This is a targeted patch for measured failures, not a structural fix for the case-study removal's side effect; worth stating plainly before this merges to `master`.
+
+Committed as a follow-up commit on this branch, ready to merge to `master` per the user's request.
+
 ## Open items / things not yet resolved
 
 - **Deploy confirmation for the concise-CoT change:** now actually pushed to `master` (see correction above) — Render auto-deploy should be picking it up, but not yet verified against production with `measure_stream.py`.
