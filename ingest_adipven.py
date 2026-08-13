@@ -59,6 +59,7 @@ EXCLUDED_FILES = {"00-index.md"}
 EXCLUDE_H2_CONTAINING = ("extraction notes",)
 
 SOURCE_RE = re.compile(r"\*\*Source(?:\(s\))?:\*\*\s*(\S+)")
+SOURCE_LINE_RE = re.compile(r"^\*\*Source(?:\(s\))?:\*\*.*$\n?", re.MULTILINE)
 DATE_RE = re.compile(r"^\*\*Date:\*\*\s*(.+)$", re.MULTILINE)
 
 # H2 heading (lowercased) -> section type. Prefix match, so
@@ -182,6 +183,13 @@ def parse_file(path: Path) -> list[Section]:
             return
         m = SOURCE_RE.search(body)
         d = DATE_RE.search(body)
+        # The **Source(s):** line is provenance boilerplate (one or two
+        # URLs), already captured above into metadata.source_url — leaving
+        # it in the embedded text just dilutes the chunk's vector with
+        # tokens that carry no retrievable meaning. Matters most on short
+        # bio-style sections, where it can be a fifth of the chunk's
+        # content. See PROJECT_LOG.md 2026-08-13.
+        body = SOURCE_LINE_RE.sub("", body).strip()
         sections.append(Section(
             title=title,
             body=body,

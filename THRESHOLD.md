@@ -2,9 +2,14 @@
 
 Measured against the rebuilt 252-chunk store, cosine metric with normalised
 embeddings. Scores are LangChain relevance scores (higher = more relevant).
+(The store was later rebuilt again at 243 chunks — see "People-retrieval
+fix and re-ingest" below. Tables in this section predate that change; none
+of the numbers in them shifted enough to change any conclusion, but read
+"252" below as the snapshot those specific tables were measured against.)
 
 Final settings: `RETRIEVAL_K = 15`, `RELEVANCE_THRESHOLD = 0.25`,
-`SERVICE_CONTENT_BOOST = 0.12`, `SUPPLEMENTARY_K = 5`.
+`SERVICE_CONTENT_BOOST = 0.12`, `SUPPLEMENTARY_K = 5`,
+`PEOPLE_SUPPLEMENTARY_K = 16` (added 2026-08-13, see below).
 
 ## Prerequisite: the scores had to be made meaningful first
 
@@ -241,4 +246,74 @@ API — plausibly faster and more failure-tolerant on a constrained
 instance, but not measured directly against Render's actual network from
 here. If the free-tier deploy times out again after this change, that
 network-path difference — not memory — is the next thing to check.
+
+## People-retrieval fix and re-ingest (2026-08-13)
+
+**Trigger:** a customer-facing turn asked "who on the team can help with an
+Applied Chemistry patent query?" and the agent refused, even though
+Ramakrishna Damodharan's stated education (Applied Chemistry degree) was in
+the store. Diagnosed as retrieval, not grounding: `retrieve()` on that exact
+phrasing returned 15 chunks and none of them his. See PROJECT_LOG.md
+2026-08-13 for the full diagnosis and the policy-side fix in `agent.py`
+(this section covers the retrieval-side numbers only).
+
+**Three changes, all re-measured together:**
+
+1. `people` added to `BOOSTED_SECTION_TYPES` — bios previously got no
+   corpus-imbalance correction at all, unlike service/contact/background.
+2. `people` split out of the shared `FIRM_DESCRIPTION_TYPES` supplementary
+   search into its own filtered search with its own budget,
+   `PEOPLE_SUPPLEMENTARY_K = 16` — sharing `SUPPLEMENTARY_K=5` across 8
+   section types left people about one slot, mostly claimed by a weak
+   generic match. 16 was the smallest value that reliably surfaced the
+   target person's chunk on a 6-query labelled probe (credential-match
+   queries: "who has a chemistry background", "who has an accounting
+   background", etc.) — 8 caught 4/6, 16 caught 6/6. This is a much larger
+   supplementary budget than any other section type gets, and is
+   deliberately generous rather than tightly justified: a name-bearing bio
+   chunk is short and specific enough that a false positive here still has
+   to clear the relevance threshold and the grounding check downstream, so
+   the cost of over-including is lower than for prose section types.
+3. The `**Source(s):** <url>` line stripped from embedded chunk text (still
+   captured in `metadata.source_url`) — pure boilerplate-dilution cleanup,
+   re-ingest required regardless since it changes chunk boundaries. Measured
+   in isolation: this alone did NOT fix the reported query (target chunk
+   stayed unranked in the top candidates) — item 2 is what did. Kept
+   anyway; it's a correct simplification with no measured downside.
+
+**Chunk count:** 252 -> 243 (fewer redundant tiny chunks now that the
+Source(s) line no longer forces early paragraph splits in a few sections).
+
+**Re-measured, before -> after (PEOPLE_SUPPLEMENTARY_K=16, all three
+changes applied together):**
+
+| check | before | after |
+|---|---|---|
+| on-topic top-1 score, n=16 | min 0.268, max 0.765 | min 0.270, max 0.767 |
+| off-topic top-1 score, n=6 | min 0.090, max 0.273 | min 0.090, max 0.279 |
+| off-topic gate end-to-end, n=6 | 5/6 (1 pre-existing leak) | 5/6 (same query leaks) |
+| recall@k=15 targets, n=10 | 8/10 | 8/10, same ranks +/-1 |
+| pricing gate, n=18 | 18/18 | 18/18 |
+| grounding discipline (live), n=8 | 8/8 refused | 8/8 refused |
+| false refusals (live), n=8 | 0/8 | 0/8 |
+| people-credential probe (new, n=6) | 3/6 | 6/6 |
+
+No existing gate regressed. The pre-existing off-topic leak ("recommend a
+good science fiction novel", raw score 0.273-0.279, already documented
+above as sitting above 0.25) now surfaces 3 people chunks instead of 1,
+since boosting made bio content generally easier to surface — the leak
+itself is not new, but its content changed. Left as-is: it was already an
+acknowledged gap in the threshold's separation (see "Why 0.25" above), the
+grounding check still has to approve any answer built from it, and closing
+it would cost the same three contact-question false-refusals documented
+there.
+
+**On PEOPLE_SUPPLEMENTARY_K=16 specifically:** this number is fit to a
+6-query probe, smaller than the 27-query set the rest of this file is
+based on. Re-measure it, not just assume it holds, the next time the People
+page content changes materially (a new practitioner added, a bio
+rewritten) — the caveat in "Sample size" above applies here with extra
+force given the smaller probe.
+
+Reproduce with `python eval.py --live`.
 

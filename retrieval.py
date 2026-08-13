@@ -299,6 +299,23 @@ def retrieve(
             if cid not in best or s > best[cid][1]:
                 best[cid] = (doc, s)
 
+    # 2a-bis: "people" gets its own filtered search, not a share of the pool
+    # above — see config.PEOPLE_SUPPLEMENTARY_K.
+    for q in queries:
+        try:
+            extra = store.similarity_search_with_relevance_scores(
+                q,
+                k=config.PEOPLE_SUPPLEMENTARY_K,
+                filter={"section_type": "people"},
+            )
+        except Exception as exc:  # noqa: BLE001 — supplementary only, never fatal
+            log.debug("people supplementary retrieval skipped: %s", exc)
+            break
+        for doc, s in extra:
+            cid = doc.metadata.get("id", "?")
+            if cid not in best or s > best[cid][1]:
+                best[cid] = (doc, s)
+
     scored = list(best.values())
 
     # 2b: weight the firm's own descriptions above case studies.

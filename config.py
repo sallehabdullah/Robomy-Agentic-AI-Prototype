@@ -139,6 +139,14 @@ BOOSTED_SECTION_TYPES = frozenset({
     # oppositions?" returned 14 case studies and refused, even though the
     # About Us list answers it directly.
     "background",
+    # "people" — named practitioners' credentials (education, registrations,
+    # languages) are Tier 1 content by CLAUDE.md's priority order, but a bio
+    # chunk repeats a title line and a **Source(s):** URL block before the
+    # actual credential sentence, so it under-scores case studies that
+    # mention the same person in flowing prose. Without this, "who on the
+    # team has a chemistry background" retrieved case-study mentions of a
+    # person over that person's own bio. See PROJECT_LOG.md 2026-08-13.
+    "people",
 })
 
 # Boosting only re-scores what the main search already returned, so it
@@ -153,8 +161,15 @@ BOOSTED_SECTION_TYPES = frozenset({
 SUPPLEMENTARY_K = 5
 FIRM_DESCRIPTION_TYPES = [
     "service", "contact", "credentials", "process",
-    "pricing", "background", "people", "testimonial",
+    "pricing", "background", "testimonial",
 ]
+
+# "people" gets its OWN filtered search rather than sharing the k=5 pool
+# above. The store has 8 individual bios; sharing FIRM_DESCRIPTION_TYPES'
+# k=5 across 7 other types left people with ~1 slot, which mostly went to
+# the same generic chunk. A named person's own bio needs its own budget to
+# reliably surface. See PROJECT_LOG.md 2026-08-13.
+PEOPLE_SUPPLEMENTARY_K = 16
 
 
 # --- fail-closed redirect --------------------------------------------------

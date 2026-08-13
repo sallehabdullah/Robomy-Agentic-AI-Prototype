@@ -78,8 +78,34 @@ The previous entry stated the concise-CoT change (`37fb25e`, `ec94600`) was "com
 
 ---
 
+## 2026-08-13 (later still) — Fixed: "who on the team can help" false refusal
+
+**Reported:** a customer asked who on the team could help with an Applied Chemistry patent query. The agent named no one and redirected to the contact channel, even though Ramakrishna Damodharan's stated education (Applied Chemistry degree, per `02-people.md`) was in the store. When the customer pasted his bio back into the chat, the agent immediately cited him correctly — proving the underlying fact was answerable and the miss was upstream of the model's judgement.
+
+**Diagnosis, retrieval-only (no model call, isolates cause from grounding.py's behavior):** ran `retrieve()` against the exact customer phrasing. All 15 returned chunks; zero were his. Three compounding causes, each measured directly:
+
+1. `people` was absent from `BOOSTED_SECTION_TYPES` (`config.py`) — bios got no corpus-imbalance correction, unlike service/contact/background content, so they lost to case studies mentioning the same person in passing.
+2. `people` shared `SUPPLEMENTARY_K=5` across all 8 `FIRM_DESCRIPTION_TYPES`, leaving it roughly one guaranteed candidate slot against 8 named practitioners' bios.
+3. The bio chunk itself was diluted: a title-line repeat, a `**Source(s):** <url>` boilerplate line, and a 370-char registration-number list ahead of the one-sentence education fact that actually answered the question.
+
+**Fix, in order (retrieval before policy — a prompt change is untestable until the model can see the chunk, and risks the model naming someone without evidence if it lands first):**
+
+- Added `people` to `BOOSTED_SECTION_TYPES`.
+- Split `people` out into its own filtered supplementary search, `PEOPLE_SUPPLEMENTARY_K=16` — the smallest value that reliably surfaced the target chunk on a 6-query labelled credential-match probe (8 caught 4/6, 16 caught 6/6). See THRESHOLD.md's "People-retrieval fix and re-ingest" section for the full before/after regression table.
+- Stripped `**Source(s):**` lines from embedded chunk text in `ingest_adipven.py` (kept in metadata) — re-ingest required regardless once chunk boundaries move; measured in isolation as *not* the thing that fixed the reported query, kept anyway as a correct simplification.
+- Re-ingested (252 → 243 chunks).
+
+That alone fixed the reported query end-to-end, live, with zero prompt change — cites Rama, states his credential, frames it as "could help" without asserting assignment.
+
+**Second, independent defect found while testing an adjacent phrasing:** "who would you recommend I reach out to ... for a biomedical technology query" still refused — but retrieval *did* surface a correctly-credentialed person (Dr Kumutha Priya, "Degree in Biomedical Science" per `02-people.md`) well above threshold. This was a policy gap, not retrieval: the model's own reasoning showed it treating "who should represent me" (a real, deliberate refusal category — the firm doesn't publish staffing/assignment decisions, see the existing few-shot in `agent.py`) as covering "who can help" (a credential-match question the store does answer) as well. Fixed by adding a `agent.py` system-prompt section that names the distinction explicitly (credential match vs. assignment/referral) plus one contrasting few-shot pinned to the exact reported query. Verified live: the reported case now answers correctly, the pre-existing assignment-decline few-shot still declines correctly, and a "recommend...reach out to" phrasing for a matter the store doesn't cover by name still correctly declines — that boundary case is a defensible reading of genuinely ambiguous phrasing, not a bug, and was left alone.
+
+**Regression, full `eval.py --live`:** 8/8 adjacent-uncovered refused, 0/8 false refusals, forced-fabrication test still fails closed, 18/18 pricing gate, all pre-existing on/off-topic gate results unchanged. One side effect noted, not fixed: the pre-existing off-topic leak on "recommend a good science fiction novel" (raw score already above threshold before this change — see THRESHOLD.md's "Why 0.25") now surfaces 3 people chunks instead of 1, since bios generally score better post-boost. Judged acceptable: the leak itself predates this change, and any answer built from it still has to clear `grounding.py`.
+
+**`grounding.py` was not touched** — every gate in this incident behaved correctly given its inputs; the defect was upstream (what the gate was given to check) in both the retrieval and policy findings above.
+
 ## Open items / things not yet resolved
 
 - **Deploy confirmation for the concise-CoT change:** now actually pushed to `master` (see correction above) — Render auto-deploy should be picking it up, but not yet verified against production with `measure_stream.py`.
 - **`backup/` directory not gitignored** — cosmetic, not urgent.
 - **`torch` embedding backend** — confirmed dead code, kept intentionally as a documented switch; revisit only if there's a reason to actually support it again.
+- **People-retrieval fix not yet deployed:** `config.py`, `retrieval.py`, `ingest_adipven.py`, `agent.py`, and the re-ingested `adipven_chroma_db/` are committed locally but not yet pushed to `master` as of this entry. `PEOPLE_SUPPLEMENTARY_K=16` is fit to a 6-query probe (see THRESHOLD.md) — worth re-measuring if the People page content changes materially.
