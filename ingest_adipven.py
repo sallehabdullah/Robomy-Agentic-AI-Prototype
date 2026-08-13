@@ -58,6 +58,15 @@ EXCLUDED_FILES = {"00-index.md"}
 # "## Extraction Notes" is internal QA commentary, not customer-facing.
 EXCLUDE_H2_CONTAINING = ("extraction notes",)
 
+# Section types dropped from the index entirely. Empty on master; this
+# branch excludes case studies to test the agent without them. Filtering by
+# type rather than by filename is deliberate: case-study content lives in
+# BOTH 03-case-studies.md and adipven-content-store.md's "## Clients & Case
+# Studies" block, and the latter's condensed restatements currently lose
+# dedupe to the former — excluding only the file would swap long case
+# studies for short ones, not remove them. 144 of 243 chunks are case_study.
+EXCLUDED_SECTION_TYPES = {"case_study"}
+
 SOURCE_RE = re.compile(r"\*\*Source(?:\(s\))?:\*\*\s*(\S+)")
 SOURCE_LINE_RE = re.compile(r"^\*\*Source(?:\(s\))?:\*\*.*$\n?", re.MULTILINE)
 DATE_RE = re.compile(r"^\*\*Date:\*\*\s*(.+)$", re.MULTILINE)
@@ -473,6 +482,18 @@ def build_documents() -> list[Document]:
 
     if not sections:
         raise SystemExit("No sections parsed — check the markdown structure.")
+
+    # Before dedupe, not after: dedupe only ever matches within a section
+    # type, so dropping a whole type here cannot change any other type's
+    # merge outcome. Doing it afterwards would let the long versions absorb
+    # the short ones first and then discard the merged result.
+    if EXCLUDED_SECTION_TYPES:
+        before = len(sections)
+        sections = [s for s in sections if s.section_type not in EXCLUDED_SECTION_TYPES]
+        log.info("excluded %d sections of type %s", before - len(sections),
+                 ", ".join(sorted(EXCLUDED_SECTION_TYPES)))
+        if not sections:
+            raise SystemExit("Every section was excluded — check EXCLUDED_SECTION_TYPES.")
 
     sections = dedupe_sections(sections)
     docs = sections_to_documents(sections)
