@@ -64,13 +64,56 @@ CHUNK_TOKEN_BUDGET = 230
 
 
 # --- generation ------------------------------------------------------------
-# Cheapest current-generation model; this is a classification/extraction/
-# summarisation workload, which it is well suited to. If grounding
-# discipline proves too weak here, escalate to claude-sonnet-5 rather than
-# loosening the guardrails.
+# GENERATION_PROVIDER selects which branch of agent.get_llm() builds the
+# client. "anthropic" is the original, measured path everything in
+# THRESHOLD.md and PROJECT_LOG.md is based on. "deepseek" talks to
+# DeepSeek's OpenAI-compatible endpoint via langchain_openai.ChatOpenAI with
+# base_url overridden — DeepSeek has no dedicated first-party LangChain
+# integration, so this is the standard way to reach it.
+#
+# UNVERIFIED as of this switch: this project's structured-output pipeline
+# (schema.py's with_structured_output field-ordering guarantee, which the
+# streaming safety argument in agent.py depends on) has only ever been
+# measured against Anthropic's tool-calling behaviour. Whether DeepSeek's
+# API fills fields in declaration order under with_structured_output is
+# untested — verify with eval.py --live before trusting streaming output
+# from this provider.
+GENERATION_PROVIDER = "deepseek"
+
+# Anthropic's Claude Haiku, kept as the fallback: this is the path
+# everything in THRESHOLD.md and PROJECT_LOG.md was measured against. If
+# grounding discipline proves too weak on the new provider, this is the
+# known-good rollback.
 GENERATION_MODEL = "claude-haiku-4-5-20251001"
+
+# DeepSeek model id, as given by the user. Not a documented DeepSeek model
+# name as of this project's last knowledge — DeepSeek's published catalog at
+# the time of the Anthropic-only build was "deepseek-chat" / "deepseek-reasoner".
+# Left as specified; if the API rejects it, that confirms the name is wrong.
+GENERATION_MODEL_DEEPSEEK = "deepseek-v4-flash"
+GENERATION_BASE_URL_DEEPSEEK = "https://api.deepseek.com"
+
+
+def active_model() -> str:
+    """The model id actually in use, for logging and eval output.
+
+    Anything reporting a measurement must call this rather than reading
+    GENERATION_MODEL directly — that constant holds the Anthropic id even
+    when GENERATION_PROVIDER routes elsewhere, so reading it labelled a
+    DeepSeek eval run as claude-haiku.
+    """
+    if GENERATION_PROVIDER == "deepseek":
+        return GENERATION_MODEL_DEEPSEEK
+    return GENERATION_MODEL
+
 GENERATION_TEMPERATURE = 0.0
-GENERATION_MAX_TOKENS = 1024
+# Was 1024. Instrumented probe (PROJECT_LOG.md, consistency-check incident)
+# found real, non-degenerate completions running 828-999 output tokens, with
+# 2/6 sampled calls hitting stop_reason=max_tokens at the 1024 ceiling. A cut
+# after can_answer/source_ids but before answer lands on schema.py's
+# defaults (answer="", source_ids=[]) and silently resolves to a refusal —
+# truncation impersonating a grounding failure, not a real one.
+GENERATION_MAX_TOKENS = 2048
 
 
 # --- retrieval -------------------------------------------------------------

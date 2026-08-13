@@ -33,6 +33,15 @@ services:
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false
+      # config.GENERATION_PROVIDER = "deepseek" — agent.get_llm() reads this
+      # directly via os.environ["DEEPSEEK_API_KEY"] (no default), so a
+      # deploy without it set in the dashboard fails on the first request,
+      # not at build time. Same sync:false pattern as ANTHROPIC_API_KEY:
+      # Render prompts for it once and holds it as a secret, never in this
+      # file or the repo. ANTHROPIC_API_KEY is left declared above as the
+      # rollback path — see config.GENERATION_PROVIDER's docstring.
+      - key: DEEPSEEK_API_KEY
+        sync: false
       - key: PYTHON_VERSION
         value: 3.11.9
       # Keep the debug surface off by default in the deployed service.

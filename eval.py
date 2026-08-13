@@ -277,7 +277,7 @@ RECALL_PROBE = [
 
 def eval_live_grounding_discipline() -> None:
     section("6. LIVE — grounding discipline on adjacent-but-uncovered queries "
-            f"({config.GENERATION_MODEL})")
+            f"({config.active_model()})")
     leaks = 0
     for q in GROUNDING_PROBE:
         r, res, v = agent.answer(q)
@@ -343,7 +343,8 @@ def main() -> int:
                          "false-refusal rate, forced-failure test)")
     args = ap.parse_args()
 
-    print(f"Model: {config.GENERATION_MODEL}   Store: {config.PERSIST_DIR}")
+    print(f"Model: {config.active_model()} (provider={config.GENERATION_PROVIDER})   "
+          f"Store: {config.PERSIST_DIR}")
     print(f"RETRIEVAL_K={config.RETRIEVAL_K}  RELEVANCE_THRESHOLD={config.RELEVANCE_THRESHOLD}  "
           f"SERVICE_CONTENT_BOOST={config.SERVICE_CONTENT_BOOST}  "
           f"SUPPLEMENTARY_K={config.SUPPLEMENTARY_K}")

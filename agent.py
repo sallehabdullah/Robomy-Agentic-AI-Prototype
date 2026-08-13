@@ -21,6 +21,7 @@ right move would be a state graph, not a longer pipe. It has not grown one.
 from __future__ import annotations
 
 import logging
+import os
 import random
 import re
 from dataclasses import dataclass
@@ -64,11 +65,16 @@ patent lasts and the passages are Malaysian patent case summaries, the \
 passages do not answer the question. Say you don't have that information.
 
 Cite the exact chunk IDs you used, copied character-for-character from the \
-[id] labels — including any trailing "__p2", "__p3" etc. Some chunks carry \
-that suffix and some don't; never guess or shorten an ID by pattern-\
-matching another one you've seen, always copy the one actually printed \
-next to the passage you're citing. They are checked against what was \
-actually retrieved.
+[id] labels — the whole string, prefix and all, not reconstructed from a \
+pattern. IDs are NOT interchangeable across people: two different \
+individuals' bios can carry two different prefixes ("02-people__..." vs \
+"adipven-content-store__..."), and some carry a trailing "__p2", "__p3" \
+etc. while others don't. Seeing one person cited as "02-people__X" does \
+NOT mean another person's bio uses that same prefix — always copy the ID \
+actually printed next to the specific passage you are citing, never infer \
+one by analogy to an ID you saw elsewhere in this prompt or an earlier \
+turn. They are checked character-for-character against what was actually \
+retrieved.
 
 Note the field order: you commit to `can_answer` and to `source_ids` \
 *before* you write `answer`. Decide what the passages support, list those \
@@ -152,6 +158,45 @@ answers the second. Do not let an assignment-style refusal bleed into a \
 credential-match question just because both mention a person by name — \
 check retrieved passages for named individuals before concluding no one \
 is named.
+
+## "Does Adipven have expertise in X" questions
+
+A customer naming a technical field and asking whether the firm can handle \
+it is a distinct case from both the grounding rule above and the \
+credential-match rule below — it needs its own check because a published \
+background list creates a third possibility neither of those rules covers: \
+the field is neither named outright nor absent from consideration.
+
+Sort the field against what the passages state (the drafters' background \
+list, and any named individual's stated education or experience) into one \
+of three buckets:
+
+- **Named directly** — the field, or a very close synonym, appears in the \
+passage. Answer it plainly: yes, and cite the passage.
+- **Adjacent, not named** — the passage names a *broader or related* \
+category (e.g. mechanical engineering, when asked about civil engineering; \
+chemistry or biotechnology, when asked about food processing) but never \
+states the specific field itself. This is the case most likely to be \
+handled wrong. Do NOT say the broader category "covers" the field — that \
+is an inference the passages don't make and you have no basis for it. Do \
+NOT decline outright either — an adjacent background is genuinely \
+relevant information, not nothing. Instead: state what background is \
+actually published (cite it), say plainly that the specific field is not \
+itself named, and recommend the customer contact the team directly so \
+Adipven can confirm the fit against their actual patent — that is a real \
+next step, not a brush-off, because only the firm can say whether a \
+specific matter matches a specific practitioner's depth in it. Set \
+can_answer=true (the background list is genuine, citable information) and \
+requires_contact=true.
+- **Nothing relevant published** — no passage names the field or anything \
+plausibly adjacent to it. This is the ordinary grounding rule: say you \
+don't have that information, and redirect to contact.
+
+The test for "adjacent" is a real, stated categorical relationship (civil \
+engineering is a branch of engineering; food processing routinely involves \
+chemistry) — not a stretch you are constructing to be agreeable. If you \
+would need outside knowledge to justify the connection, treat it as \
+"nothing relevant published" instead.
 
 ## Clarification
 
@@ -303,6 +348,33 @@ he could help with an Applied Chemistry patent query. For a specific \
 assignment, contact Adipven directly: email info@adipven.com or call +603 \
 2201 4023 / +603 2201 4026.
 
+### Example — expertise in an adjacent-but-unnamed field (NOT a flat decline, NOT "covers")
+
+User: My patent is related to a civil engineering product. I'm worried \
+Adipven won't have the expertise to understand that domain.
+
+reasoning: Civil engineering not named anywhere in passages. \
+04-company-contact__company_background__p3: drafters' backgrounds include \
+mechanical engineering, among others — related field, not a stated match. \
+adipven-content-store__mohd_faizul_mohd_yin_director_intellectual_property_services_ii__p1: \
+Master's in Mechanical Engineering. Adjacent, not named — state the \
+background, flag the gap, recommend contact to confirm. Verdict: \
+answerable (with caveat), cite both.
+needs_clarification: false
+service_area: patents
+can_answer: true
+source_ids: ["04-company-contact__company_background__p3", "adipven-content-store__mohd_faizul_mohd_yin_director_intellectual_property_services_ii__p1"]
+requires_contact: true
+answer: Adipven's patent drafters have technical backgrounds spanning \
+chemistry, mechanical engineering, electrical and electronic engineering, \
+ICT, biotechnology and microbiology — Mohd Faizul Mohd Yin, a Director, \
+holds a Master's Degree in Mechanical Engineering, which is a related \
+field. Civil engineering itself isn't named among the firm's published \
+technical backgrounds, though, so I can't confirm a direct match from what's \
+published. The best way to know for sure is to contact the team directly \
+with details of your patent so they can confirm the fit: email \
+info@adipven.com or call +603 2201 4023 / +603 2201 4026.
+
 ### Example — a greeting (warm steer, NOT a contact redirect)
 
 User: Hello
@@ -347,17 +419,77 @@ Customer question: {query}
 
 @lru_cache(maxsize=1)
 def get_llm():
-    """Build the chat model. Lazy — importing this module must stay cheap."""
+    """Build the chat model. Lazy — importing this module must stay cheap.
+
+    Provider is config.GENERATION_PROVIDER. Either way the key is read from
+    the environment (via .env) and passed straight to the SDK — this
+    function never sees, logs, or hardcodes a key value itself.
+    """
     from dotenv import load_dotenv
+
+    load_dotenv()
+
+    if config.GENERATION_PROVIDER == "deepseek":
+        from langchain_openai import ChatOpenAI
+
+        log.debug("initialising deepseek: %s", config.GENERATION_MODEL_DEEPSEEK)
+        return ChatOpenAI(
+            model=config.GENERATION_MODEL_DEEPSEEK,
+            base_url=config.GENERATION_BASE_URL_DEEPSEEK,
+            api_key=os.environ["DEEPSEEK_API_KEY"],
+            temperature=config.GENERATION_TEMPERATURE,
+            max_tokens=config.GENERATION_MAX_TOKENS,
+        )
+
+    if config.GENERATION_PROVIDER != "anthropic":
+        raise ValueError(
+            f"Unknown config.GENERATION_PROVIDER={config.GENERATION_PROVIDER!r}; "
+            f"expected 'anthropic' or 'deepseek'."
+        )
+
     from langchain_anthropic import ChatAnthropic
 
-    load_dotenv()  # ANTHROPIC_API_KEY; never read or logged by this code
     log.debug("initialising %s", config.GENERATION_MODEL)
     return ChatAnthropic(
         model=config.GENERATION_MODEL,
         temperature=config.GENERATION_TEMPERATURE,
         max_tokens=config.GENERATION_MAX_TOKENS,
     )
+
+
+def _structured_llm():
+    """Bind AdipvenResponse as the output schema, per provider.
+
+    Anthropic takes the library default (json_schema-style structured
+    output, with tool use forced). DeepSeek cannot: measured against
+    deepseek-v4-flash, all three of the library's paths behave differently
+    from the Anthropic one —
+
+      * method="json_schema" (the default) -> HTTP 400, "This
+        response_format type is unavailable now".
+      * method="function_calling" with the library's default tool_choice
+        -> HTTP 400, "Thinking mode does not support this tool_choice".
+        The default pins tool_choice to the schema name to force the call;
+        deepseek-v4-flash is a thinking model and rejects a forced choice.
+      * method="json_mode" -> returns JSON but enforces nothing. Observed
+        dropping `reasoning`, `can_answer` and `source_ids` outright and
+        emitting `answer` alone — which is both a schema violation and an
+        inversion of the field order the streaming gate depends on.
+
+    That leaves function_calling with tool_choice="auto", which works and
+    preserves declaration order (verified: `answer` text first appears only
+    after `reasoning`, `can_answer` and `source_ids` are final).
+
+    The cost of "auto" is that the call is no longer forced — the model MAY
+    answer in prose instead of calling the tool, which surfaces as a
+    ValidationError and is failed closed by answer(). That is a refusal
+    path Anthropic's forced tool use does not have. See PROJECT_LOG.md.
+    """
+    if config.GENERATION_PROVIDER == "deepseek":
+        return get_llm().with_structured_output(
+            AdipvenResponse, method="function_calling", tool_choice="auto"
+        )
+    return get_llm().with_structured_output(AdipvenResponse)
 
 
 @dataclass(frozen=True)
@@ -409,7 +541,7 @@ def get_chain():
         ("human", USER_TEMPLATE),
     ])
 
-    structured = get_llm().with_structured_output(AdipvenResponse)
+    structured = _structured_llm()
 
     return (
         RunnablePassthrough.assign(
@@ -514,8 +646,19 @@ def answer(
         # operator's problem, not the customer's — surface them loudly.
         raise AgentError(
             f"The language model call failed: {exc}\n"
-            "Check ANTHROPIC_API_KEY is set in .env and that the network is up."
+            "Check the provider API key is set in .env and the network is up."
         ) from exc
+
+    # A provider that cannot be made to force the tool call (DeepSeek — see
+    # _structured_llm) may answer in prose instead, and the parser then
+    # returns None *without raising*. That is not an operational failure and
+    # not a schema violation, so neither handler above catches it; left
+    # alone it reaches grounding.enforce() and raises AttributeError on
+    # response.service_area, turning a model quirk into a 500. Failing
+    # closed here keeps it an ordinary uncertainty path.
+    if response is None:
+        log.warning("model returned no structured output (no tool call)")
+        return _fail_closed(result, "model returned no structured output")
 
     # Nothing above this line is trusted. The gate is the only thing that
     # can declare a response safe to show.
@@ -610,6 +753,15 @@ def answer_stream(query: str, pending: PendingClarification | None = None):
             "pending": pending,
             "retrieval": result,
         }):
+            # None here means the model answered in prose instead of calling
+            # the tool (see _structured_llm). Skipping rather than assigning
+            # keeps `latest` at the last real partial; if none ever arrives,
+            # the `latest is None` branch below fails closed. Without this,
+            # partial.answer raises AttributeError, which the generic
+            # handler below converts into an operator-facing AgentError —
+            # i.e. a 500 for what is really just an ungrounded turn.
+            if partial is None:
+                continue
             latest = partial
 
             if not gated:
@@ -635,7 +787,7 @@ def answer_stream(query: str, pending: PendingClarification | None = None):
     except Exception as exc:  # noqa: BLE001
         raise AgentError(
             f"The language model call failed: {exc}\n"
-            "Check ANTHROPIC_API_KEY is set in .env and that the network is up."
+            "Check the provider API key is set in .env and the network is up."
         ) from exc
 
     if latest is None:

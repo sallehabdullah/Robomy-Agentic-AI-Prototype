@@ -27,6 +27,10 @@ uvicorn[standard]==0.52.1
 anthropic==0.120.2
 langchain-core==1.5.3
 langchain-anthropic==1.5.4
+# DeepSeek has no first-party LangChain integration; it exposes an
+# OpenAI-compatible API, reached here via ChatOpenAI with base_url
+# overridden (see config.GENERATION_PROVIDER).
+langchain-openai==1.2.1
 
 # --- retrieval / vector store --------------------------------------------
 langchain-chroma==1.1.0
