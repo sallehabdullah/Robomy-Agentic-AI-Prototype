@@ -176,6 +176,18 @@ Committed as a follow-up commit on this branch, ready to merge to `master` per t
 
 **Pushed directly to `master`** (not a branch) — this is a bug fix to existing behavior, not an experiment; per the same reasoning as prior direct-to-master fixes in this log (e.g. the people-retrieval incident).
 
+---
+
+## 2026-08-13 (session close) — Summary of this session
+
+**Did:** Built and tested `experiment/exclude-case-studies` (243 → 99 chunks), found and fixed a resulting off-topic-gate regression with a narrow query-time bridge in `retrieval.py`, merged the whole thing to `master` (`fe06109`) and pushed. First live customer exchange post-deploy then surfaced a false refusal on "what services does Adipven offer" — diagnosed as a pre-existing, unrelated bug (few-shot examples taught the model the wrong chunk-ID shape, ~60% reproducible), fixed with one instruction line in `agent.py`, verified, and pushed directly to `master` (`2ba3e6d`).
+
+**State:** `master` is deployed (or Render is picking up `2ba3e6d` now) with case studies excluded from the index, the industrial-design query-bridge fix, and the citation-ID fix all live. Full eval battery clean across every change in this session. Working tree clean aside from the pre-existing untracked `backup/` directory.
+
+**Next:** watch production for any further false refusals on lay-phrased or multi-part-citation queries — the query bridge in `retrieval.py` only covers two specific phrasings, not the underlying gate-margin regression from removing case studies (see the "What this doesn't fix" note in the exclude-case-studies entry above). `PEOPLE_SUPPLEMENTARY_K=16` and the concise-CoT/people-retrieval production verifications from earlier sessions are still open per the list below.
+
+---
+
 ## Open items / things not yet resolved
 
 - **Deploy confirmation for the concise-CoT change:** now actually pushed to `master` (see correction above) — Render auto-deploy should be picking it up, but not yet verified against production with `measure_stream.py`.
