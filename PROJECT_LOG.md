@@ -103,9 +103,14 @@ That alone fixed the reported query end-to-end, live, with zero prompt change �
 
 **`grounding.py` was not touched** — every gate in this incident behaved correctly given its inputs; the defect was upstream (what the gate was given to check) in both the retrieval and policy findings above.
 
+**Pushed:** committed as `8e4097e` and pushed to `master` the same day (superseding the "not yet deployed" note this entry originally had here) — Render auto-deploy should pick it up.
+
+**Anatomy of a Grounded Agent report updated to match:** the teaching artifact (`https://claude.ai/code/artifact/19a5a64d-ccc5-46c3-a3b2-62660df47039`) was revised in place rather than left describing pre-fix behavior. New material was integrated into its existing sections, not appended as a changelog: `retrieval.py`'s section gained "The same bug, one layer deeper" (the corpus-imbalance correction existed but hadn't reached `people`, and why a shared supplementary budget quietly starves whichever category has the most named entities); `ingest_adipven.py`'s section gained the `Source(s):` boilerplate-dilution fix, including the honest note that it alone didn't resolve the reported case; `agent.py`'s section gained "Two questions that look alike, and aren't" covering the credential-match vs. assignment distinction; and the closing lessons list gained: diagnose retrieval before touching the prompt, since a refusal can come from either layer and the two look identical from the customer's side.
+
 ## Open items / things not yet resolved
 
 - **Deploy confirmation for the concise-CoT change:** now actually pushed to `master` (see correction above) — Render auto-deploy should be picking it up, but not yet verified against production with `measure_stream.py`.
 - **`backup/` directory not gitignored** — cosmetic, not urgent.
 - **`torch` embedding backend** — confirmed dead code, kept intentionally as a documented switch; revisit only if there's a reason to actually support it again.
-- **People-retrieval fix not yet deployed:** `config.py`, `retrieval.py`, `ingest_adipven.py`, `agent.py`, and the re-ingested `adipven_chroma_db/` are committed locally but not yet pushed to `master` as of this entry. `PEOPLE_SUPPLEMENTARY_K=16` is fit to a 6-query probe (see THRESHOLD.md) — worth re-measuring if the People page content changes materially.
+- **`PEOPLE_SUPPLEMENTARY_K=16`** is fit to a 6-query probe (see THRESHOLD.md) — worth re-measuring if the People page content changes materially (new practitioner added, a bio rewritten).
+- **Deploy confirmation for the people-retrieval fix (`8e4097e`):** pushed to `master`, same as above — not yet verified against production.
