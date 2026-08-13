@@ -107,6 +107,35 @@ That alone fixed the reported query end-to-end, live, with zero prompt change �
 
 **Anatomy of a Grounded Agent report updated to match:** the teaching artifact (`https://claude.ai/code/artifact/19a5a64d-ccc5-46c3-a3b2-62660df47039`) was revised in place rather than left describing pre-fix behavior. New material was integrated into its existing sections, not appended as a changelog: `retrieval.py`'s section gained "The same bug, one layer deeper" (the corpus-imbalance correction existed but hadn't reached `people`, and why a shared supplementary budget quietly starves whichever category has the most named entities); `ingest_adipven.py`'s section gained the `Source(s):` boilerplate-dilution fix, including the honest note that it alone didn't resolve the reported case; `agent.py`'s section gained "Two questions that look alike, and aren't" covering the credential-match vs. assignment distinction; and the closing lessons list gained: diagnose retrieval before touching the prompt, since a refusal can come from either layer and the two look identical from the customer's side.
 
+---
+
+## 2026-08-13 (branch) — `experiment/exclude-case-studies`: index built without case studies
+
+**Branch, not master.** `master` keeps case studies; this branch exists to test the agent without them and can be returned from by checkout. `abc21ae`.
+
+**What:** `EXCLUDED_SECTION_TYPES = {"case_study"}` in `ingest_adipven.py`, filtered in `build_documents()` after parse and before dedupe. 243 → 99 chunks.
+
+Filtered by section type, not filename. `adipven-content-store.md` carries its own `## Clients & Case Studies` block whose condensed restatements currently *lose* dedupe to the longer 03- versions — excluding only `03-case-studies.md` would have promoted the summaries, not removed the content. Filtering before dedupe matters because `dedupe_sections` only ever matches within a section type, so dropping one type cannot disturb another's merges: confirmed, every non-case-study count is byte-identical to the baseline census (announcement=6, background=15, contact=6, credentials=6, people=34, pricing=3, process=1, provenance=5, service=21, testimonial=2). Announcements deliberately kept — single variable, and it keeps the HISTORICAL path in `agent.py`/`schema.py` exercised by real chunks. `config.py`'s three imbalance corrections were left exactly as they are, since whether they still earn their keep is a question *for* this test, not an input to it.
+
+**Retrieval precision improved substantially.** recall@15 went 8/10 → **10/10** (recall@10: 6/10 → 8/10). Every one of the four documented "case studies drowned the answer" failures inverted: "do you handle trademark oppositions?" moved from rank #31 to **#3**, "can Adipven help if someone is infringing my trademark?" #41 → #13, "who is the managing director?" #13 → #10, "what services does Adipven offer" #9 → #6. Firm-description share of results rose from 21/35 to 28/30 on the oppositions query. All live gates unchanged and clean: 8/8 adjacent-uncovered refused, 0/8 false refusals, forced fabrication still fails closed, 18/18 pricing.
+
+**But the off-topic gate got worse, not better — and this is the finding that matters.** On-topic/off-topic score separation widened in the wrong direction: −0.009 → **−0.032**. Two on-topic queries now fall below `RELEVANCE_THRESHOLD = 0.25` and are hard-rejected with 0 chunks, i.e. the customer gets the fail-closed redirect:
+
+- "how do I protect the shape of my product" — raw max **0.181** (was above threshold), top hit `01-services__patents`
+- "I designed a new bottle cap, how do I stop people copying it?" — raw max **0.244**, top hit `01-services__copyrights`
+
+Both are industrial-design questions, and `01-services__industrial_design` is still in the store and still scores 0.520 on the direct phrasing "what is industrial design protection". The chunk did not get worse; the *bridge to it* disappeared. This also takes down `eval_supplementary_search`'s clarification-reply case (`industrial_design` surfaced in 0 kept, was 14) — that check depends on the same query clearing the gate first.
+
+**What this actually shows:** the case studies were doing a second job nobody had credited them with. `config.py:120-131` frames them purely as noise — long litigation prose that out-scores short service copy. That framing is correct about *ranking*, and removing them fixes ranking exactly as predicted. What it misses is that the same narrative prose was also the only text in the store written in a customer's own vocabulary. A layperson describing their problem ("the shape of my product", "a bottle cap", "stop people copying it") matched a litigation summary far more readily than the terse service-page entry, and once that match cleared the threshold, the boost and supplementary searches could pull the correct service chunk up behind it. Remove the case studies and those queries no longer clear the gate at all — and the boost never runs, because it is applied only *after* the raw threshold passes (`config.py:128-131`).
+
+**No single threshold fixes it.** The off-topic leak "recommend a good science fiction novel" scores **0.279** raw — higher than either failing on-topic query. Admitting the bottle-cap query means admitting the sci-fi query. The bands genuinely overlap; this is not a tuning oversight.
+
+**Not touched, deliberately:** `RELEVANCE_THRESHOLD`, `SERVICE_CONTENT_BOOST`, `BOOSTED_SECTION_TYPES`, `SUPPLEMENTARY_K`, `PEOPLE_SUPPLEMENTARY_K`, `grounding.py`, `agent.py`, `schema.py`, `retrieval.py`. Re-tuning inside the same change would have confounded the experiment.
+
+**Open decision this branch hands back:** shipping it as-is trades better ranking on questions that already worked for hard refusals on lay-phrased design questions — a bad trade on its face, since a wrong-but-present answer is recoverable in conversation and a refusal is not. The options worth measuring next, in rough order of appeal: (a) keep case studies out but add customer-vocabulary phrasing to the service chunks themselves, so the bridge is in Tier 1 content rather than Tier 3; (b) keep case studies in the index but demote them harder at rank time; (c) lower the threshold and accept a wider off-topic leak, relying on `grounding.py` to fail closed — weakest, since `THRESHOLD.md`'s "Why 0.25" already documents the sci-fi leak as the reason not to go lower.
+
+**Side note, unrelated to the change:** merely *running* `eval.py` dirties the committed `adipven_chroma_db/` (sqlite + HNSW files rewrite on read), so `git status` shows modifications after any eval run. Restore with `git checkout -- adipven_chroma_db`.
+
 ## Open items / things not yet resolved
 
 - **Deploy confirmation for the concise-CoT change:** now actually pushed to `master` (see correction above) — Render auto-deploy should be picking it up, but not yet verified against production with `measure_stream.py`.
